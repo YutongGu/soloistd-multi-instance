@@ -99,3 +99,37 @@ func TestPromptReadStopsWhenContextIsCanceled(t *testing.T) {
 		t.Fatalf("readLineContext() error = %v, want context.Canceled", err)
 	}
 }
+
+func TestNamedInstancesHaveIndependentPathsAndKeys(t *testing.T) {
+	p := paths{managerData: "/data/soloistd", soloistData: "/data/soloist", soloistCache: "/cache/soloist"}
+	cfg := config{DeviceName: "Original", APIKey: "shared", Instances: []config{
+		{Name: "kitchen", DeviceName: "Kitchen", PipewireDevice: "sink-a"},
+		{Name: "bedroom", DeviceName: "Bedroom", APIKey: "other", PipewireDevice: "sink-b"},
+	}}
+	if err := validateConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	instances := cfg.activeInstances(p)
+	if len(instances) != 3 {
+		t.Fatalf("got %d instances", len(instances))
+	}
+	if instances[0].DataDir != "" || instances[1].DataDir != "/data/soloistd/instances/kitchen" || instances[2].DataDir != "/data/soloistd/instances/bedroom" {
+		t.Fatalf("data paths: %#v", instances)
+	}
+	if instances[1].CacheDir != "/cache/soloistd/kitchen" || instances[2].CacheDir != "/cache/soloistd/bedroom" {
+		t.Fatalf("cache paths: %#v", instances)
+	}
+	if instances[1].APIKey != "shared" || instances[2].APIKey != "other" {
+		t.Fatalf("API keys were not resolved")
+	}
+	if _, err := cfg.instance("", p); err == nil {
+		t.Fatal("ambiguous instance should fail")
+	}
+	if got, err := cfg.instance("bedroom", p); err != nil || got.PipewireDevice != "sink-b" {
+		t.Fatalf("selected %#v, %v", got, err)
+	}
+	cfg.Instances = append(cfg.Instances, config{Name: "kitchen", DeviceName: "Duplicate"})
+	if err := validateConfig(cfg); err == nil {
+		t.Fatal("duplicate instance should fail")
+	}
+}

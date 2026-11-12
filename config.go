@@ -8,17 +8,20 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 )
 
 type config struct {
-	DeviceName     string `json:"device_name"`
-	APIKey         string `json:"api_key"`
-	DataDir        string `json:"data_dir,omitempty"`
-	CacheDir       string `json:"cache_dir,omitempty"`
-	CacheSizeMB    *int   `json:"cache_size_mb,omitempty"`
-	PipewireDevice string `json:"pipewire_device,omitempty"`
-	InitialVolume  *int   `json:"initial_volume,omitempty"`
-	WebSocket      string `json:"websocket,omitempty"`
+	Name           string   `json:"name,omitempty"`
+	Instances      []config `json:"instances,omitempty"`
+	DeviceName     string   `json:"device_name,omitempty"`
+	APIKey         string   `json:"api_key,omitempty"`
+	DataDir        string   `json:"data_dir,omitempty"`
+	CacheDir       string   `json:"cache_dir,omitempty"`
+	CacheSizeMB    *int     `json:"cache_size_mb,omitempty"`
+	PipewireDevice string   `json:"pipewire_device,omitempty"`
+	InitialVolume  *int     `json:"initial_volume,omitempty"`
+	WebSocket      string   `json:"websocket,omitempty"`
 }
 
 func loadConfig(p paths) (config, error) {
@@ -39,7 +42,43 @@ func loadConfig(p paths) (config, error) {
 	return cfg, nil
 }
 
+var instanceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
 func validateConfig(cfg config) error {
+	if cfg.DeviceName == "" && len(cfg.Instances) == 0 {
+		return errors.New("device_name or instances is required")
+	}
+	if len(cfg.Instances) > 0 {
+		seen := map[string]bool{}
+		if cfg.DeviceName != "" {
+			seen["default"] = true
+		}
+		for _, inst := range cfg.Instances {
+			if !instanceNamePattern.MatchString(inst.Name) || inst.Name == "default" {
+				return fmt.Errorf("invalid instance name %q (use letters, digits, _ or -; default is reserved)", inst.Name)
+			}
+			if seen[inst.Name] {
+				return fmt.Errorf("duplicate instance name %q", inst.Name)
+			}
+			seen[inst.Name] = true
+			if len(inst.Instances) != 0 {
+				return errors.New("nested instances are not supported")
+			}
+			if inst.APIKey == "" {
+				inst.APIKey = cfg.APIKey
+			}
+			if err := validateInstance(inst); err != nil {
+				return fmt.Errorf("instance %q: %w", inst.Name, err)
+			}
+		}
+	}
+	if cfg.DeviceName == "" {
+		return nil
+	}
+	return validateInstance(cfg)
+}
+
+func validateInstance(cfg config) error {
 	if cfg.DeviceName == "" {
 		return errors.New("device_name is required")
 	}
@@ -53,6 +92,46 @@ func validateConfig(cfg config) error {
 		return errors.New("initial_volume must be between 0 and 100")
 	}
 	return nil
+}
+
+func (cfg config) activeInstances(p paths) []config {
+	var result []config
+	if cfg.DeviceName != "" {
+		result = append(result, cfg)
+	}
+	for _, inst := range cfg.Instances {
+		if inst.APIKey == "" {
+			inst.APIKey = cfg.APIKey
+		}
+		if inst.DataDir == "" {
+			inst.DataDir = filepath.Join(p.managerData, "instances", inst.Name)
+		}
+		if inst.CacheDir == "" {
+			inst.CacheDir = filepath.Join(filepath.Dir(p.soloistCache), "soloistd", inst.Name)
+		}
+		result = append(result, inst)
+	}
+	return result
+}
+
+func (cfg config) instance(name string, p paths) (config, error) {
+	instances := cfg.activeInstances(p)
+	if name == "" {
+		if len(instances) == 1 {
+			return instances[0], nil
+		}
+		return config{}, errors.New("multiple instances configured; specify --instance NAME")
+	}
+	for _, inst := range instances {
+		id := inst.Name
+		if id == "" {
+			id = "default"
+		}
+		if id == name {
+			return inst, nil
+		}
+	}
+	return config{}, fmt.Errorf("unknown instance %q", name)
 }
 
 func saveConfig(p paths, cfg config) error {

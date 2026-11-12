@@ -108,11 +108,11 @@ func (a app) usage() {
 	fmt.Fprint(a.stdout, `soloistd manages Spotify Soloist as a user service.
 
 Usage:
-  soloistd setup [--device-name NAME] [--api-key KEY]
+  soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--api-key KEY]
   soloistd run
-  soloistd pair
+  soloistd pair [--instance ID]
   soloistd update
-  soloistd ctl COMMAND [ARGS...]
+  soloistd ctl [--instance ID] COMMAND [ARGS...]
   soloistd service install|uninstall|start|stop|restart|status|logs
   soloistd version
 
@@ -120,9 +120,11 @@ Quick start:
   soloistd setup
   soloistd service install
 
-After the service starts, select its device name in the Spotify app. The API
-key can also be supplied to setup through the SOLOIST_API_KEY environment
-variable, keeping it out of shell history.
+Add named devices with 'setup --instance ID --device-name NAME
+--pipewire-device DEST', then restart an installed service. Use --instance ID
+with pair and ctl when more than one device is configured. The API key can
+also be supplied through SOLOIST_API_KEY. The interactive setup prompt does
+not echo the key.
 `)
 }
 

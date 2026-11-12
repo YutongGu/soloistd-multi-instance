@@ -4,7 +4,7 @@
 pkgname=soloistd
 pkgver=0.2.0
 pkgrel=1
-pkgdesc='Manage Spotify Soloist as a user service with automatic updates'
+pkgdesc='Manage multiple Spotify Soloist devices with automatic updates'
 arch=('x86_64' 'aarch64' 'armv7h')
 url='https://github.com/MopigamesYT/soloistd'
 license=('MPL-2.0')

@@ -22,6 +22,8 @@ func (a app) setup(ctx context.Context, args []string) error {
 	fs.SetOutput(a.stderr)
 	deviceName := fs.String("device-name", "", "Spotify Connect device name")
 	apiKey := fs.String("api-key", "", "Spotify Soloist API key (prefer SOLOIST_API_KEY)")
+	instanceName := fs.String("instance", "", "instance identifier (letters, digits, _ or -)")
+	pipewireDevice := fs.String("pipewire-device", "", "PipeWire destination for this instance")
 	if err := fs.Parse(args); err != nil {
 		return &commandError{code: 2, err: err}
 	}
@@ -43,8 +45,23 @@ func (a app) setup(ctx context.Context, args []string) error {
 			*deviceName = defaultName
 		}
 	}
+	p, err := resolvePaths()
+	if err != nil {
+		return err
+	}
+	old, loadErr := loadConfig(p)
+	if loadErr != nil {
+		if _, statErr := os.Stat(p.configFile); statErr == nil {
+			return loadErr
+		} else if !errors.Is(statErr, os.ErrNotExist) {
+			return statErr
+		}
+	}
 	if *apiKey == "" {
 		*apiKey = os.Getenv("SOLOIST_API_KEY")
+	}
+	if loadErr == nil && *apiKey == "" {
+		*apiKey = old.APIKey
 	}
 	if *apiKey == "" {
 		fmt.Fprint(a.stdout, "Soloist API key: ")
@@ -63,7 +80,6 @@ func (a app) setup(ctx context.Context, args []string) error {
 			*apiKey = strings.TrimSpace(line)
 		}
 	}
-	var err error
 	*deviceName, err = nonEmpty(*deviceName, "device name")
 	if err != nil {
 		return err
@@ -73,18 +89,34 @@ func (a app) setup(ctx context.Context, args []string) error {
 		return err
 	}
 
-	p, err := resolvePaths()
-	if err != nil {
-		return err
+	if *instanceName != "" && (!instanceNamePattern.MatchString(*instanceName) || *instanceName == "default") {
+		return &commandError{code: 2, err: fmt.Errorf("invalid instance name %q", *instanceName)}
 	}
-	cfg := config{DeviceName: *deviceName, APIKey: *apiKey}
-	if old, loadErr := loadConfig(p); loadErr == nil {
-		cfg.DataDir = old.DataDir
-		cfg.CacheDir = old.CacheDir
-		cfg.CacheSizeMB = old.CacheSizeMB
-		cfg.PipewireDevice = old.PipewireDevice
-		cfg.InitialVolume = old.InitialVolume
-		cfg.WebSocket = old.WebSocket
+	cfg := old
+	if loadErr != nil {
+		cfg = config{}
+	}
+	cfg.APIKey = *apiKey
+	if *instanceName == "" {
+		cfg.DeviceName = *deviceName
+		if *pipewireDevice != "" {
+			cfg.PipewireDevice = *pipewireDevice
+		}
+	} else {
+		found := false
+		for i := range cfg.Instances {
+			if cfg.Instances[i].Name == *instanceName {
+				cfg.Instances[i].DeviceName = *deviceName
+				if *pipewireDevice != "" {
+					cfg.Instances[i].PipewireDevice = *pipewireDevice
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			cfg.Instances = append(cfg.Instances, config{Name: *instanceName, DeviceName: *deviceName, PipewireDevice: *pipewireDevice})
+		}
 	}
 	if err := saveConfig(p, cfg); err != nil {
 		return fmt.Errorf("save configuration: %w", err)
@@ -156,10 +188,20 @@ func (a app) update(ctx context.Context, args []string) error {
 }
 
 func (a app) pair(ctx context.Context, args []string) error {
-	if len(args) != 0 {
-		return &commandError{code: 2, err: errors.New("pair takes no arguments")}
+	fs := flag.NewFlagSet("pair", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	instanceName := fs.String("instance", "", "instance identifier")
+	if err := fs.Parse(args); err != nil {
+		return &commandError{code: 2, err: err}
 	}
-	p, cfg, err := configuredPaths()
+	if fs.NArg() != 0 {
+		return &commandError{code: 2, err: errors.New("pair takes no positional arguments")}
+	}
+	p, rootCfg, err := configuredPaths()
+	if err != nil {
+		return err
+	}
+	cfg, err := rootCfg.instance(*instanceName, p)
 	if err != nil {
 		return err
 	}
@@ -190,10 +232,21 @@ func (a app) pair(ctx context.Context, args []string) error {
 }
 
 func (a app) ctl(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("ctl", flag.ContinueOnError)
+	fs.SetOutput(a.stderr)
+	instanceName := fs.String("instance", "", "instance identifier")
+	if err := fs.Parse(args); err != nil {
+		return &commandError{code: 2, err: err}
+	}
+	args = fs.Args()
 	if len(args) == 0 {
 		return &commandError{code: 2, err: errors.New("ctl requires a Soloist control command")}
 	}
-	p, cfg, err := configuredPaths()
+	p, rootCfg, err := configuredPaths()
+	if err != nil {
+		return err
+	}
+	cfg, err := rootCfg.instance(*instanceName, p)
 	if err != nil {
 		return err
 	}

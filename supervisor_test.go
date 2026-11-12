@@ -249,3 +249,123 @@ func Example_archiveName() {
 	fmt.Println(name)
 	// Output: soloist_release_x86_64.tar.gz
 }
+
+func TestRunDaemonStartsAllNamedInstances(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Soloist is Linux-only")
+	}
+	p := testPaths(t)
+	cfg := config{APIKey: "secret", Instances: []config{
+		{Name: "kitchen", DeviceName: "Kitchen", PipewireDevice: "sink-a"},
+		{Name: "bedroom", DeviceName: "Bedroom", PipewireDevice: "sink-b"},
+	}}
+	if err := saveConfig(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p.soloistBinary()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logFile := filepath.Join(t.TempDir(), "started")
+	t.Setenv("SOLOIST_TEST_LOG", logFile)
+	script := `#!/bin/sh
+name= pipe= data= cache=
+while [ "$#" -gt 0 ]; do
+ case "$1" in
+ --device-name) name=$2; shift 2;;
+ --pipewire-device) pipe=$2; shift 2;;
+ --data-dir) data=$2; shift 2;;
+ --cache-dir) cache=$2; shift 2;;
+ *) shift;;
+ esac
+done
+printf '%s|%s|%s|%s\n' "$name" "$pipe" "$data" "$cache" >> "$SOLOIST_TEST_LOG"
+trap 'exit 0' TERM
+while :; do sleep 0.05; done
+`
+	if err := os.WriteFile(p.soloistBinary(), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldURL := downloadBaseURL
+	downloadBaseURL = "http://127.0.0.1:1/"
+	defer func() { downloadBaseURL = oldURL }()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	a := app{stdin: strings.NewReader(""), stdout: &stdout, stderr: &stderr}
+	done := make(chan error, 1)
+	go func() { done <- a.runDaemon(ctx, nil) }()
+	deadline := time.After(2 * time.Second)
+	var lines []string
+	for len(lines) < 2 {
+		select {
+		case err := <-done:
+			t.Fatalf("daemon exited early: %v; %s", err, stderr.String())
+		case <-deadline:
+			t.Fatalf("only started %v; %s", lines, stderr.String())
+		default:
+		}
+		data, err := os.ReadFile(logFile)
+		if err == nil {
+			lines = strings.Split(strings.TrimSpace(string(data)), "\n")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"Kitchen|sink-a|" + filepath.Join(p.managerData, "instances/kitchen") + "|", "Bedroom|sink-b|" + filepath.Join(p.managerData, "instances/bedroom") + "|", "/soloistd/kitchen", "/soloistd/bedroom"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("startup log %q missing %q", joined, want)
+		}
+	}
+}
+
+func TestMultipleExpiryReportsRefreshOnlyOnce(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Soloist is Linux-only")
+	}
+	archive, err := archiveName(runtime.GOARCH)
+	if err != nil {
+		t.Skip(err)
+	}
+	newBinary := []byte("#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo 'soloist fresh'; exit 0; fi\nsleep 0.1\nexit 0\n")
+	body := makeArchive(t, newBinary)
+	gets := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/"+archive {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method == http.MethodHead {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		gets++
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+	oldURL := downloadBaseURL
+	downloadBaseURL = server.URL + "/"
+	defer func() { downloadBaseURL = oldURL }()
+	p := testPaths(t)
+	cfg := config{APIKey: "secret", Instances: []config{{Name: "kitchen", DeviceName: "Kitchen"}, {Name: "bedroom", DeviceName: "Bedroom"}}}
+	if err := saveConfig(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p.soloistBinary()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p.soloistBinary(), []byte("#!/bin/sh\nexit 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	a := app{stdin: strings.NewReader(""), stdout: &stdout, stderr: &stderr}
+	if err := a.runDaemon(context.Background(), nil); err != nil {
+		t.Fatalf("run: %v; stdout: %s; stderr: %s", err, stdout.String(), stderr.String())
+	}
+	if gets != 1 {
+		t.Fatalf("downloaded %d times, want once", gets)
+	}
+}

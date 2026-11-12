@@ -1,21 +1,29 @@
 .\" SPDX-License-Identifier: MPL-2.0
-.TH SOLOISTD 1 "2026-09-12" "soloistd 0.2.0" "User Commands"
+.TH SOLOISTD 1 "2026-11-12" "soloistd 0.2.0" "User Commands"
 .SH NAME
-soloistd \- manage Spotify Soloist as a user service with automatic updates
+soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .SH SYNOPSIS
 .B soloistd setup
 .RB [ \-\-device\-name
 .IR NAME ]
 .RB [ \-\-api\-key
 .IR KEY ]
+.RB [ \-\-instance
+.IR ID ]
+.RB [ \-\-pipewire\-device
+.IR DEST ]
 .br
 .B soloistd run
 .br
 .B soloistd pair
+.RB [ \-\-instance
+.IR ID ]
 .br
 .B soloistd update
 .br
 .B soloistd ctl
+.RB [ \-\-instance
+.IR ID ]
 .I COMMAND
 .RI [ ARGS .\|.\|.]
 .br
@@ -25,9 +33,10 @@ soloistd \- manage Spotify Soloist as a user service with automatic updates
 .B soloistd version
 .SH DESCRIPTION
 .B soloistd
-is a supervisor for Spotify Soloist. It keeps the Soloist API key out of the
-systemd unit, runs Soloist as a systemd user service, checks the official
-Spotify CDN for new builds, and recovers when a build expires.
+supervises one or more Spotify Soloist instances in a single systemd user
+service. Each instance can have its own Spotify Connect name and PipeWire
+destination. The API key stays out of the systemd unit. The daemon checks the
+official Spotify CDN for new builds and recovers when a build expires.
 .PP
 The daemon compares the official archive's CDN metadata at startup and every
 six hours. When the archive changes,
@@ -36,7 +45,7 @@ downloads the stable archive for the running architecture, validates it by
 executing
 .BR "soloist --version" ,
 atomically replaces its user\-owned copy of the executable, and restarts
-Soloist gracefully. A failed check never interrupts playback.
+all configured Soloist instances gracefully. A failed check never interrupts playback.
 .PP
 Spotify documents daemon exit status 10 as "build expired". That remains an
 independent fallback: the current build is downloaded and Soloist restarted
@@ -44,15 +53,20 @@ whenever status 10 is reported, even if the metadata check failed.
 .SH COMMANDS
 .TP
 .B setup
-Configure the Spotify Connect device name and API key, then fetch Soloist. The
-interactive key prompt does not echo. The default device name is
+Configure or update a device and fetch Soloist. Use --instance ID to add or
+update a named instance and --pipewire-device DEST to select its PipeWire
+output. The original unnamed device remains available as the default instance.
+Named instances inherit the existing API key unless they set their own in the
+configuration file. The interactive key prompt does not echo. The default
+device name is
 .IR soloistd@ <hostname>.
 .TP
 .B run
-Run the supervisor in the foreground. This is what the user service starts.
+Run all configured instances in the foreground. This is what the user service starts.
 .TP
 .B pair
-Replace the saved Spotify Connect session. Stop the installed service first,
+Replace one saved Spotify Connect session. Specify --instance ID when more than
+one instance is configured. Stop the installed service first,
 because Soloist permits only one process per data directory.
 .TP
 .B update
@@ -61,7 +75,8 @@ Fetch the current official Soloist build immediately.
 .B ctl
 Run a
 .B soloist ctl
-command against the managed Soloist process.
+command against one managed Soloist process. Specify --instance ID when more
+than one instance is configured.
 .TP
 .B service
 Manage the systemd user service. The actions are
@@ -78,12 +93,50 @@ removes only the unit and keeps the configuration and playback data.
 .TP
 .B version
 Print the version and exit.
+.SH MULTIPLE INSTANCES
+Configure two named instances, replacing the example PipeWire destinations
+with destinations on your machine:
+.PP
+.nf
+SOLOIST_API_KEY='your-key' soloistd setup --instance kitchen \\
+  --device-name Kitchen --pipewire-device alsa_output.kitchen
+soloistd setup --instance bedroom --device-name Bedroom \\
+  --pipewire-device alsa_output.bedroom
+soloistd service install
+.fi
+.PP
+The first command may instead follow a plain
+.BR "soloistd setup" ;
+that original device remains available with
+.BR "--instance default" .
+Instance IDs start with a letter or digit and may then contain letters,
+digits, underscores, or hyphens. The ID
+.B default
+is reserved. A later
+.B setup --instance ID
+updates that instance's device name and, when supplied, its PipeWire
+destination. Restart an installed service after changing its configuration.
+.PP
+When multiple instances are configured, specify an ID for
+.B pair
+and
+.BR ctl ,
+for example
+.BR "soloistd ctl --instance kitchen status" .
+Stop the service before pairing, then start it again afterward. Each named
+instance has its own session and cache directory. Custom
+.B data_dir
+and
+.B cache_dir
+paths must not overlap between instances. Give each instance a distinct
+.B websocket
+listen address if that option is configured.
 .SH ENVIRONMENT
 .TP
 .B SOLOIST_API_KEY
 Supplies the API key to
-.BR "soloistd setup" ,
-keeping it out of shell history.
+.BR "soloistd setup" .
+Use the interactive setup prompt to avoid typing the key into shell history.
 .TP
 .BR XDG_CONFIG_HOME ", " XDG_DATA_HOME ", " XDG_CACHE_HOME
 Locate the files below. The usual
@@ -104,10 +157,16 @@ Managed Soloist executable.
 Metadata for the installed release.
 .TP
 .I $XDG_DATA_HOME/soloist
-Spotify session and state.
+Spotify session and state for the original unnamed instance.
 .TP
 .I $XDG_CACHE_HOME/soloist
-Playback cache.
+Playback cache for the original unnamed instance.
+.TP
+.I $XDG_DATA_HOME/soloistd/instances/ID
+State for a named instance.
+.TP
+.I $XDG_CACHE_HOME/soloistd/ID
+Cache for a named instance.
 .TP
 .I $XDG_CONFIG_HOME/systemd/user/soloistd.service
 Generated user unit. It contains only the path to
