@@ -42,11 +42,22 @@ func loadConfig(p paths) (config, error) {
 	return cfg, nil
 }
 
+func loadConfigOptional(p paths) (config, error) {
+	cfg, err := loadConfig(p)
+	if err == nil {
+		return cfg, nil
+	}
+	if _, statErr := os.Stat(p.configFile); errors.Is(statErr, os.ErrNotExist) {
+		return config{}, nil
+	}
+	return config{}, err
+}
+
 var instanceNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 func validateConfig(cfg config) error {
 	if cfg.DeviceName == "" && len(cfg.Instances) == 0 {
-		return errors.New("device_name or instances is required")
+		return nil
 	}
 	if len(cfg.Instances) > 0 {
 		seen := map[string]bool{}
@@ -117,6 +128,9 @@ func (cfg config) activeInstances(p paths) []config {
 func (cfg config) instance(name string, p paths) (config, error) {
 	instances := cfg.activeInstances(p)
 	if name == "" {
+		if len(instances) == 0 {
+			return config{}, errors.New("no instances configured")
+		}
 		if len(instances) == 1 {
 			return instances[0], nil
 		}

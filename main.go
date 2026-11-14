@@ -75,6 +75,8 @@ func (a app) run(ctx context.Context, args []string) int {
 		err = a.ctl(ctx, args[1:])
 	case "service":
 		err = a.service(ctx, args[1:])
+	case "instance":
+		err = a.instanceCommand(ctx, args[1:])
 	case "version", "--version", "-V":
 		fmt.Fprintf(a.stdout, "soloistd %s\n", version)
 		return 0
@@ -110,6 +112,9 @@ func (a app) usage() {
 Usage:
   soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--api-key KEY]
   soloistd run
+  soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY]
+  soloistd instance remove --name ID
+  soloistd instance list
   soloistd pair [--instance ID]
   soloistd update
   soloistd ctl [--instance ID] COMMAND [ARGS...]
@@ -117,14 +122,12 @@ Usage:
   soloistd version
 
 Quick start:
-  soloistd setup
   soloistd service install
+  soloistd instance add --name kitchen --device-name Kitchen
 
-Add named devices with 'setup --instance ID --device-name NAME
---pipewire-device DEST', then restart an installed service. Use --instance ID
-with pair and ctl when more than one device is configured. The API key can
-also be supplied through SOLOIST_API_KEY. The interactive setup prompt does
-not echo the key.
+Instance commands manage the running supervisor immediately and save changes
+for future starts. Use --instance ID with pair and ctl when more than one
+device is configured. 'setup' remains available for offline configuration.
 `)
 }
 

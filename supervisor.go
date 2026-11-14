@@ -28,7 +28,11 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 	if len(args) != 0 {
 		return &commandError{code: 2, err: errors.New("run takes no arguments")}
 	}
-	p, cfg, err := configuredPaths()
+	p, err := resolvePaths()
+	if err != nil {
+		return err
+	}
+	cfg, err := loadConfigOptional(p)
 	if err != nil {
 		return err
 	}
@@ -36,18 +40,28 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 	if err := validateInstancePaths(instances, p); err != nil {
 		return err
 	}
-	if err := a.ensureBinary(ctx, p); err != nil {
-		return err
-	}
-	if _, err := a.checkForUpdate(ctx, p); err != nil {
-		fmt.Fprintf(a.stderr, "soloistd: update check failed; continuing with installed build: %v\n", err)
+	if len(instances) > 0 {
+		if err := a.ensureBinary(ctx, p); err != nil {
+			return err
+		}
+		if _, err := a.checkForUpdate(ctx, p); err != nil {
+			fmt.Fprintf(a.stderr, "soloistd: update check failed; continuing with installed build: %v\n", err)
+		}
 	}
 	daemonCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	updates := a.watchForUpdates(daemonCtx)
+	requests := make(chan controlRequest)
+	closeControl, err := listenForControl(daemonCtx, p, requests)
+	if err != nil {
+		return err
+	}
+	defer closeControl()
 	results := make(chan instanceResult, len(instances))
 	signals := make(map[string]chan struct{}, len(instances))
 	active := make(map[string]bool, len(instances))
+	cancels := make(map[string]context.CancelFunc, len(instances))
+	removing := make(map[string]chan instanceResponse)
 	byName := make(map[string]config, len(instances))
 	var running int
 	var generation uint64
@@ -57,12 +71,14 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 			name = "default"
 		}
 		ch := make(chan struct{}, 1)
+		workerCtx, workerCancel := context.WithCancel(daemonCtx)
+		cancels[name] = workerCancel
 		signals[name] = ch
 		active[name] = true
 		running++
 		startedGeneration := generation
 		go func() {
-			code, err, updated := a.runSoloistOnce(daemonCtx, p.soloistBinary(), inst.soloistArgs(p), ch)
+			code, err, updated := a.runSoloistOnce(workerCtx, p.soloistBinary(), inst.soloistArgs(p), ch)
 			results <- instanceResult{name: name, generation: startedGeneration, code: code, err: err, updated: updated}
 		}()
 	}
@@ -98,6 +114,9 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 			drain()
 			return nil
 		case <-updates:
+			if running == 0 {
+				continue
+			}
 			updated, err := a.checkForUpdate(daemonCtx, p)
 			if err != nil {
 				fmt.Fprintf(a.stderr, "soloistd: update check failed; continuing with installed build: %v\n", err)
@@ -105,9 +124,131 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				generation++
 				broadcast()
 			}
+		case request := <-requests:
+			command := request.command
+			respond := func(err error) {
+				if err != nil {
+					request.reply <- instanceResponse{Error: err.Error()}
+				} else {
+					request.reply <- instanceResponse{}
+				}
+			}
+			switch command.Action {
+			case "list":
+				info := make([]instanceInfo, 0, len(cfg.Instances)+1)
+				for _, inst := range cfg.activeInstances(p) {
+					name := inst.Name
+					if name == "" {
+						name = "default"
+					}
+					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice})
+				}
+				request.reply <- instanceResponse{Instances: info}
+			case "add":
+				inst := command.Instance
+				name := inst.Name
+				if name == "" || (name != "default" && !instanceNamePattern.MatchString(name)) {
+					respond(fmt.Errorf("invalid instance name %q", name))
+					continue
+				}
+				if active[name] {
+					respond(fmt.Errorf("instance %q already exists", name))
+					continue
+				}
+				next := cfg
+				if name == "default" {
+					if next.DeviceName != "" {
+						respond(fmt.Errorf("instance %q already exists", name))
+						continue
+					}
+					next.DeviceName, next.PipewireDevice = inst.DeviceName, inst.PipewireDevice
+					if inst.APIKey != "" {
+						next.APIKey = inst.APIKey
+					}
+				} else {
+					if next.APIKey == "" && inst.APIKey != "" {
+						next.APIKey, inst.APIKey = inst.APIKey, ""
+					}
+					next.Instances = append(append([]config(nil), cfg.Instances...), inst)
+				}
+				if err := validateConfig(next); err != nil {
+					respond(err)
+					continue
+				}
+				resolved := next.activeInstances(p)
+				if err := validateInstancePaths(resolved, p); err != nil {
+					respond(err)
+					continue
+				}
+				if running == 0 {
+					if err := a.ensureBinary(daemonCtx, p); err != nil {
+						respond(err)
+						continue
+					}
+					if _, err := a.checkForUpdate(daemonCtx, p); err != nil {
+						fmt.Fprintf(a.stderr, "soloistd: update check failed; continuing with installed build: %v\n", err)
+					}
+				}
+				if err := saveConfig(p, next); err != nil {
+					respond(err)
+					continue
+				}
+				cfg = next
+				selected, err := cfg.instance(name, p)
+				if err != nil {
+					respond(err)
+					continue
+				}
+				byName[name] = selected
+				start(selected)
+				fmt.Fprintf(a.stdout, "Started Soloist instance %s\n", name)
+				respond(nil)
+			case "remove":
+				name := command.Name
+				if !active[name] {
+					respond(fmt.Errorf("unknown instance %q", name))
+					continue
+				}
+				next := cfg
+				if name == "default" {
+					next.DeviceName = ""
+					next.PipewireDevice = ""
+					next.DataDir = ""
+					next.CacheDir = ""
+					next.CacheSizeMB = nil
+					next.InitialVolume = nil
+					next.WebSocket = ""
+				} else {
+					next.Instances = make([]config, 0, len(cfg.Instances)-1)
+					for _, inst := range cfg.Instances {
+						if inst.Name != name {
+							next.Instances = append(next.Instances, inst)
+						}
+					}
+				}
+				if err := saveConfig(p, next); err != nil {
+					respond(err)
+					continue
+				}
+				cfg = next
+				removing[name] = request.reply
+				cancels[name]()
+			default:
+				respond(fmt.Errorf("unknown instance action %q", command.Action))
+			}
 		case result := <-results:
 			running--
 			active[result.name] = false
+			cancels[result.name]()
+			delete(cancels, result.name)
+			if reply, ok := removing[result.name]; ok {
+				delete(removing, result.name)
+				delete(signals, result.name)
+				delete(byName, result.name)
+				reply <- instanceResponse{}
+				fmt.Fprintf(a.stdout, "Stopped Soloist instance %s\n", result.name)
+				continue
+			}
 			if ctx.Err() != nil {
 				cancel()
 				drain()

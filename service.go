@@ -37,7 +37,7 @@ func (a app) installService(ctx context.Context) error {
 	if !commandExists("systemctl") {
 		return errors.New("systemctl is not available; use 'soloistd run' under another process manager")
 	}
-	p, _, err := configuredPaths()
+	p, err := resolvePaths()
 	if err != nil {
 		return err
 	}
