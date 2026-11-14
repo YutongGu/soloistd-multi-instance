@@ -30,6 +30,15 @@ func (a app) setup(ctx context.Context, args []string) error {
 	if fs.NArg() != 0 {
 		return &commandError{code: 2, err: fmt.Errorf("setup takes no positional arguments")}
 	}
+	keyFlag := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "api-key" {
+			keyFlag = true
+		}
+	})
+	if keyFlag && *deviceName == "" && *instanceName == "" && *pipewireDevice == "" {
+		return a.setupAPIKey(ctx, *apiKey)
+	}
 
 	reader := bufio.NewReader(a.stdin)
 	if strings.TrimSpace(*deviceName) == "" {
@@ -126,6 +135,40 @@ func (a app) setup(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Fprintln(a.stdout, "Ready. Run 'soloistd service install', then select the device in Spotify.")
+	return nil
+}
+
+func (a app) setupAPIKey(ctx context.Context, key string) error {
+	var err error
+	key, err = nonEmpty(key, "API key")
+	if err != nil {
+		return &commandError{code: 2, err: err}
+	}
+	p, err := resolvePaths()
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(p.controlSocket()); statErr == nil {
+		if _, err := sendControl(ctx, p, instanceCommand{Action: "set-key", Instance: config{APIKey: key}}); err != nil {
+			if !errors.Is(err, unix.ECONNREFUSED) && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+		} else {
+			fmt.Fprintf(a.stdout, "Saved API key to %s\n", p.configFile)
+			return nil
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return statErr
+	}
+	cfg, err := loadConfigOptional(p)
+	if err != nil {
+		return err
+	}
+	cfg.APIKey = key
+	if err := saveConfig(p, cfg); err != nil {
+		return fmt.Errorf("save configuration: %w", err)
+	}
+	fmt.Fprintf(a.stdout, "Saved API key to %s\n", p.configFile)
 	return nil
 }
 

@@ -24,11 +24,11 @@ func TestDynamicInstanceLifecycle(t *testing.T) {
 	logFile := filepath.Join(t.TempDir(), "events")
 	t.Setenv("SOLOIST_TEST_EVENTS", logFile)
 	script := `#!/bin/sh
-name=
+name= key=
 while [ "$#" -gt 0 ]; do
- case "$1" in --device-name) name=$2; shift 2;; *) shift;; esac
+ case "$1" in --device-name) name=$2; shift 2;; --api-key) key=$2; shift 2;; *) shift;; esac
 done
-printf 'start:%s\n' "$name" >> "$SOLOIST_TEST_EVENTS"
+printf 'start:%s:%s\n' "$name" "$key" >> "$SOLOIST_TEST_EVENTS"
 trap 'printf "stop:%s\n" "$name" >> "$SOLOIST_TEST_EVENTS"; exit 0' TERM
 while :; do sleep 0.05; done
 `
@@ -85,6 +85,17 @@ while :; do sleep 0.05; done
 	waitFor("start:Kitchen")
 	add("bedroom", "Bedroom", "")
 	waitFor("start:Bedroom")
+	setupClient := app{stdin: strings.NewReader(""), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+	if err := setupClient.setup(ctx, []string{"--api-key", "rotated"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("start:Kitchen:rotated")
+	waitFor("start:Bedroom:rotated")
+	eventsBeforeRemoval, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bedroomStopsBeforeRemoval := strings.Count(string(eventsBeforeRemoval), "stop:Bedroom")
 	list, err := sendControl(ctx, p, instanceCommand{Action: "list"})
 	if err != nil || len(list.Instances) != 2 {
 		t.Fatalf("list = %#v, %v", list, err)
@@ -97,11 +108,11 @@ while :; do sleep 0.05; done
 	}
 	waitFor("stop:Kitchen")
 	events, _ := os.ReadFile(logFile)
-	if strings.Contains(string(events), "stop:Bedroom") {
+	if strings.Count(string(events), "stop:Bedroom") != bedroomStopsBeforeRemoval {
 		t.Fatal("removing Kitchen stopped Bedroom")
 	}
 	persisted, err := loadConfig(p)
-	if err != nil || len(persisted.Instances) != 1 || persisted.Instances[0].Name != "bedroom" || persisted.APIKey != "secret" {
+	if err != nil || len(persisted.Instances) != 1 || persisted.Instances[0].Name != "bedroom" || persisted.APIKey != "rotated" {
 		t.Fatalf("persisted config = %#v, %v", persisted, err)
 	}
 	if _, err := sendControl(ctx, p, instanceCommand{Action: "remove", Name: "bedroom"}); err != nil {

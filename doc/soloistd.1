@@ -66,7 +66,13 @@ whenever status 10 is reported, even if the metadata check failed.
 .SH COMMANDS
 .TP
 .B setup
-Configure or update a device offline and fetch Soloist. Changes made with
+With only
+.BR "--api-key KEY" ,
+save or update the shared API key without configuring a device or downloading
+Soloist. Existing device definitions are preserved. If the supervisor is
+running, instances that inherit the shared key restart with the new key;
+instances with their own key are unaffected. Other invocations configure or
+update a device offline and fetch Soloist. Device changes made with
 .B setup
 take effect on the next supervisor start. Use
 .B instance add
@@ -143,9 +149,13 @@ soloistd instance remove --name kitchen
 .PP
 The manager persists additions and removals for future starts. The first
 .B instance add
-prompts for an API key. An existing key from
-.B soloistd setup
-is reused. The original unnamed device remains available with
+prompts for an API key unless a shared key is saved. Save one ahead of time with
+.BR "soloistd setup --api-key KEY" ,
+or create
+.I $XDG_CONFIG_HOME/soloistd/config.json
+containing only
+.BR "{\"api_key\":\"your-key\"}" .
+Later instances inherit this key. The original unnamed device remains available with
 .BR "--instance default" .
 Instance IDs start with a letter or digit and may then contain letters,
 digits, underscores, or hyphens. The ID
@@ -189,7 +199,7 @@ fallbacks are used when they are unset.
 .TP
 .I $XDG_CONFIG_HOME/soloistd/config.json
 Private persisted state, mode 0600 in a directory of mode 0700. The manager
-updates it when instances are added or removed.
+updates it when instances are added or removed or the shared API key changes.
 .TP
 .I $XDG_CONFIG_HOME/soloistd/control.sock
 Private management socket, mode 0600, present while the supervisor runs.

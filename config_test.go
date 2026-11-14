@@ -4,6 +4,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -42,6 +43,36 @@ func TestSaveAndLoadConfigSecurely(t *testing.T) {
 	}
 	if got := dirInfo.Mode().Perm(); got != 0o700 {
 		t.Fatalf("config directory mode = %o, want 700", got)
+	}
+}
+
+func TestSetupAPIKeyOnlyCreatesAndUpdatesConfig(t *testing.T) {
+	p := testPaths(t)
+	a := app{stdin: nil, stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+	if err := a.setup(context.Background(), []string{"--api-key", "first"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil || cfg.APIKey != "first" || cfg.DeviceName != "" || len(cfg.Instances) != 0 {
+		t.Fatalf("key-only config = %#v, %v", cfg, err)
+	}
+	if _, err := os.Stat(p.soloistBinary()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("setup downloaded Soloist: %v", err)
+	}
+	info, err := os.Stat(p.configFile)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v, %v", info, err)
+	}
+	cfg.Instances = []config{{Name: "kitchen", DeviceName: "Kitchen"}}
+	if err := saveConfig(p, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.setup(context.Background(), []string{"--api-key", "second"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = loadConfig(p)
+	if err != nil || cfg.APIKey != "second" || len(cfg.Instances) != 1 || cfg.Instances[0].DeviceName != "Kitchen" {
+		t.Fatalf("updated config = %#v, %v", cfg, err)
 	}
 }
 

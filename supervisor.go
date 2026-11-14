@@ -62,6 +62,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 	active := make(map[string]bool, len(instances))
 	cancels := make(map[string]context.CancelFunc, len(instances))
 	removing := make(map[string]chan instanceResponse)
+	restartReason := make(map[string]string)
 	byName := make(map[string]config, len(instances))
 	var running int
 	var generation uint64
@@ -134,6 +135,54 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				}
 			}
 			switch command.Action {
+			case "set-key":
+				key := strings.TrimSpace(command.Instance.APIKey)
+				if key == "" {
+					respond(errors.New("API key cannot be empty"))
+					continue
+				}
+				next := cfg
+				next.APIKey = key
+				if err := validateConfig(next); err != nil {
+					respond(err)
+					continue
+				}
+				if err := saveConfig(p, next); err != nil {
+					respond(err)
+					continue
+				}
+				changed := cfg.APIKey != key
+				cfg = next
+				if changed {
+					for _, inst := range cfg.activeInstances(p) {
+						name := inst.Name
+						if name == "" {
+							name = "default"
+						}
+						if !active[name] {
+							continue
+						}
+						if name != "default" {
+							inherited := false
+							for _, saved := range cfg.Instances {
+								if saved.Name == name && saved.APIKey == "" {
+									inherited = true
+									break
+								}
+							}
+							if !inherited {
+								continue
+							}
+						}
+						byName[name] = inst
+						restartReason[name] = "API key change"
+						select {
+						case signals[name] <- struct{}{}:
+						default:
+						}
+					}
+				}
+				respond(nil)
 			case "list":
 				info := make([]instanceInfo, 0, len(cfg.Instances)+1)
 				for _, inst := range cfg.activeInstances(p) {
@@ -245,6 +294,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				delete(removing, result.name)
 				delete(signals, result.name)
 				delete(byName, result.name)
+				delete(restartReason, result.name)
 				reply <- instanceResponse{}
 				fmt.Fprintf(a.stdout, "Stopped Soloist instance %s\n", result.name)
 				continue
@@ -255,7 +305,12 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				return nil
 			}
 			if result.updated || result.generation < generation {
-				fmt.Fprintf(a.stdout, "Restarting Soloist with the new build... (instance %s)\n", result.name)
+				if reason := restartReason[result.name]; reason != "" {
+					fmt.Fprintf(a.stdout, "Restarting Soloist instance %s after %s...\n", result.name, reason)
+					delete(restartReason, result.name)
+				} else {
+					fmt.Fprintf(a.stdout, "Restarting Soloist with the new build... (instance %s)\n", result.name)
+				}
 				start(byName[result.name])
 				continue
 			}

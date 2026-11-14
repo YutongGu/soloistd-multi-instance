@@ -127,7 +127,9 @@ Quick start:
 
 Instance commands manage the running supervisor immediately and save changes
 for future starts. Use --instance ID with pair and ctl when more than one
-device is configured. 'setup' remains available for offline configuration.
+device is configured. 'setup --api-key KEY' alone saves or updates the shared
+key, including for running instances that inherit it. Other setup forms remain
+available for offline device configuration.
 `)
 }
 

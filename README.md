@@ -57,6 +57,14 @@ soloistd instance list
 
 Replace the example PipeWire destinations with destinations on your machine. The first `instance add` prompts for an API key without echoing it. You can also supply `--api-key` or `SOLOIST_API_KEY` for automation. The manager saves the key privately and reuses it for later instances.
 
+To save the key before adding devices, run `soloistd setup --api-key KEY`. This creates or updates `config.json` without asking for a device name or downloading Soloist. You can also create the file yourself with only the shared key:
+
+```json
+{"api_key": "your-key"}
+```
+
+Instances added later inherit that key. If you create the file yourself, restrict it with `chmod 600 ~/.config/soloistd/config.json`. Running `setup --api-key KEY` again preserves existing instances and restarts running instances that inherit the shared key. Instances with their own `api_key` keep their key. A key passed directly on the command line may be recorded in shell history; use your shell's secure input mechanism when needed.
+
 Instances start immediately. Remove one without stopping the others:
 
 ```sh
@@ -65,13 +73,13 @@ soloistd instance remove --name kitchen
 
 Removal keeps its Spotify session and cache. Adding the same ID again reuses those files. `instance list` shows the configured IDs, Spotify device names, and PipeWire destinations. The commands require a running supervisor, either from the systemd service or `soloistd run`. After upgrading an already running service from a version without instance commands, restart it once to enable live management.
 
-For compatibility, `soloistd setup` still writes the configuration and downloads Soloist. Its interactive API-key prompt does not echo. The default Spotify Connect device name is `soloistd@<hostname>` (for example, `soloistd@framework13`):
+For compatibility, `soloistd setup` without a key-only invocation still configures a device and downloads Soloist. Its interactive API-key prompt does not echo. The default Spotify Connect device name is `soloistd@<hostname>` (for example, `soloistd@framework13`):
 
 ```sh
 soloistd setup
 ```
 
-The unnamed device remains available as the `default` instance. A subsequent `setup --instance ID` still works, but changes made through `setup` or by editing JSON take effect only after restarting the service. Use `instance add` and `instance remove` for live changes. Instance IDs start with a letter or digit and may then contain letters, digits, underscores, or hyphens; `default` selects the original unnamed device. Use `wpctl status` to inspect available PipeWire outputs. Each named instance gets its own Spotify session and playback cache.
+The unnamed device remains available as the `default` instance. A subsequent `setup --instance ID` still works, but device changes made through `setup` or by editing JSON take effect only after restarting the service. The key-only `setup --api-key KEY` takes effect for running instances immediately. Use `instance add` and `instance remove` for live changes. Instance IDs start with a letter or digit and may then contain letters, digits, underscores, or hyphens; `default` selects the original unnamed device. Use `wpctl status` to inspect available PipeWire outputs. Each named instance gets its own Spotify session and playback cache.
 
 If Soloist is already running in a terminal, stop that process first so the service can acquire its data directory.
 
@@ -81,7 +89,8 @@ Open Spotify on the same local network, open the device picker, and select a con
 
 ```text
 soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--api-key KEY]
-                                Configure an instance offline and fetch Soloist
+                                Configure an instance offline and fetch Soloist;
+                                --api-key KEY alone saves the shared key
 soloistd run                    Run the foreground supervisor
 soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY]
                                 Start and save an instance immediately
@@ -114,7 +123,7 @@ With multiple instances, `pair` and `ctl` require `--instance ID` (use `default`
 | Named instance cache | `$XDG_CACHE_HOME/soloistd/ID` |
 | systemd user unit | `$XDG_CONFIG_HOME/systemd/user/soloistd.service` |
 
-The usual `~/.config`, `~/.local/share`, and `~/.cache` fallbacks are used when the XDG variables are unset. The config directory is mode `0700`; both `config.json` and the live management socket are mode `0600`. The manager updates `config.json` internally when you add or remove an instance so the change survives a restart. The generated unit contains only the path to `soloistd`; it never contains the API key. Soloist itself requires the key as a command-line argument, so the key can still be visible to same-user process inspection while Soloist is running.
+The usual `~/.config`, `~/.local/share`, and `~/.cache` fallbacks are used when the XDG variables are unset. The config directory is mode `0700`; both `config.json` and the live management socket are mode `0600`. The manager updates `config.json` internally when you add or remove an instance or change the shared API key, so the change survives a restart. The generated unit contains only the path to `soloistd`; it never contains the API key. Soloist itself requires the key as a command-line argument, so the key can still be visible to same-user process inspection while Soloist is running.
 
 Additional documented Soloist options can be set directly in `config.json`: `data_dir`, `cache_dir`, `cache_size_mb`, `pipewire_device`, `initial_volume`, and `websocket`. The original top-level device settings still work. Named devices live in the `instances` array and inherit the top-level `api_key` unless they specify their own. For example:
 
