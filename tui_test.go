@@ -116,32 +116,39 @@ func TestTUIAPIKeyFlagAppliesToEveryNewInstance(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer closeControl()
-	added := make(chan config, 2)
+	added := make(chan instanceCommand, 2)
 	go func() {
+		var instances []instanceInfo
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case req := <-requests:
-				if req.command.Action == "add" {
-					added <- req.command.Instance
+				if req.command.Action == "add-temporary" {
+					added <- req.command
+					inst := req.command.Instance
+					instances = append(instances, instanceInfo{Name: inst.Name, DeviceName: inst.DeviceName, NoPersist: true})
 				}
-				req.reply <- instanceResponse{}
+				if req.command.Action == "list" {
+					req.reply <- instanceResponse{Instances: instances}
+				} else {
+					req.reply <- instanceResponse{}
+				}
 			}
 		}
 	}()
 	var output bytes.Buffer
 	a := app{stdin: strings.NewReader("a\nkitchen\nKitchen\na\nbedroom\nBedroom\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
-	if err := a.tui(ctx, []string{"--api-key", "from-flag"}); err != nil {
+	if err := a.tui(ctx, []string{"--api-key", "from-flag", "--no-persist"}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		inst := <-added
-		if inst.APIKey != "from-flag" || inst.PipewireDevice != "" {
-			t.Fatalf("added instance %d = %#v", i, inst)
+		command := <-added
+		if command.Instance.APIKey != "from-flag" || command.Instance.PipewireDevice != "" || command.Action != "add-temporary" {
+			t.Fatalf("added instance %d = %#v", i, command)
 		}
 	}
-	if strings.Contains(output.String(), "Soloist API key:") || strings.Contains(output.String(), "from-flag") {
+	if strings.Contains(output.String(), "Soloist API key:") || strings.Contains(output.String(), "from-flag") || !strings.Contains(output.String(), "temporary") {
 		t.Fatalf("unexpected TUI output:\n%s", output.String())
 	}
 }

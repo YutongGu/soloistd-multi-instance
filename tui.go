@@ -18,6 +18,7 @@ func (a app) tui(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("tui", flag.ContinueOnError)
 	fs.SetOutput(a.stderr)
 	apiKey := fs.String("api-key", "", "default API key for instances added in this session")
+	noPersist := fs.Bool("no-persist", false, "do not restore instances added in this session after a supervisor restart")
 	if err := fs.Parse(args); err != nil {
 		return &commandError{code: 2, err: err}
 	}
@@ -71,6 +72,9 @@ func (a app) tui(ctx context.Context, args []string) error {
 			destination := inst.PipewireDevice
 			if destination == "" {
 				destination = "default PipeWire output"
+			}
+			if inst.NoPersist {
+				destination += "; temporary"
 			}
 			fmt.Fprintf(a.stdout, "  %s — %s (%s)\n", inst.Name, inst.DeviceName, destination)
 		}
@@ -135,7 +139,11 @@ func (a app) tui(ctx context.Context, args []string) error {
 			if key == cfg.APIKey {
 				key = ""
 			}
-			_, err = sendControl(ctx, p, instanceCommand{Action: "add", Instance: config{Name: name, DeviceName: device, APIKey: key}})
+			action := "add"
+			if *noPersist {
+				action = "add-temporary"
+			}
+			_, err = sendControl(ctx, p, instanceCommand{Action: action, Instance: config{Name: name, DeviceName: device, APIKey: key}})
 			if err != nil {
 				fmt.Fprintf(a.stdout, "Could not add instance: %v\n", err)
 				continue

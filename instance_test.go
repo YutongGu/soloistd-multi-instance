@@ -73,6 +73,33 @@ while :; do sleep 0.05; done
 	if err != nil || socketInfo.Mode().Perm() != 0o600 {
 		t.Fatalf("socket mode = %v, %v", socketInfo, err)
 	}
+	temporaryCLI := app{stdin: strings.NewReader(""), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
+	if err := temporaryCLI.instanceCommand(ctx, []string{"add", "--name", "temp", "--device-name", "Temporary", "--api-key", "secret", "--no-persist"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("start:Temporary:secret")
+	if _, err := os.Stat(p.configFile); !os.IsNotExist(err) {
+		t.Fatalf("temporary add wrote config: %v", err)
+	}
+	temporaryList, err := sendControl(ctx, p, instanceCommand{Action: "list"})
+	if err != nil || len(temporaryList.Instances) != 1 || !temporaryList.Instances[0].NoPersist {
+		t.Fatalf("temporary list = %#v, %v", temporaryList, err)
+	}
+	var listed bytes.Buffer
+	listCLI := app{stdin: strings.NewReader(""), stdout: &listed, stderr: &bytes.Buffer{}}
+	if err := listCLI.instanceCommand(ctx, []string{"list"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(listed.String(), "temp\tTemporary\t(temporary)") {
+		t.Fatalf("temporary marker missing from list: %q", listed.String())
+	}
+	if err := temporaryCLI.instanceCommand(ctx, []string{"remove", "--name", "temp"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("stop:Temporary")
+	if _, err := os.Stat(p.configFile); !os.IsNotExist(err) {
+		t.Fatalf("temporary remove wrote config: %v", err)
+	}
 	add := func(name, device, key string) {
 		t.Helper()
 		cli := app{stdin: strings.NewReader(key + "\n"), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
@@ -123,6 +150,23 @@ while :; do sleep 0.05; done
 		t.Fatalf("empty list = %#v, %v", list, err)
 	}
 	add("kitchen", "Kitchen", "")
+	if err := temporaryCLI.instanceCommand(ctx, []string{"add", "--name", "scratch", "--device-name", "Scratch", "--no-persist"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("start:Scratch:rotated")
+	list, err = sendControl(ctx, p, instanceCommand{Action: "list"})
+	if err != nil || len(list.Instances) != 2 || !list.Instances[1].NoPersist {
+		t.Fatalf("mixed list = %#v, %v", list, err)
+	}
+	if err := setupClient.setup(ctx, []string{"--api-key", "rotated-again"}); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("start:Scratch:rotated-again")
+	waitFor("start:Kitchen:rotated-again")
+	persisted, err = loadConfig(p)
+	if err != nil || len(persisted.Instances) != 1 || persisted.Instances[0].Name != "kitchen" || persisted.APIKey != "rotated-again" {
+		t.Fatalf("temporary instance was persisted: %#v, %v", persisted, err)
+	}
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)

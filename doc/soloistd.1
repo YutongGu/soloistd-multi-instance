@@ -18,6 +18,7 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .B soloistd tui
 .RB [ \-\-api\-key
 .IR KEY ]
+.RB [ \-\-no\-persist ]
 .br
 .B soloistd instance add
 .BI --name " ID"
@@ -26,6 +27,7 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .IR DEST ]
 .RB [ --api-key
 .IR KEY ]
+.RB [ --no-persist ]
 .br
 .B soloistd instance remove
 .BI --name " ID"
@@ -100,9 +102,15 @@ takes priority over
 .B SOLOIST_API_KEY
 and the saved shared key, and does not change existing instances. Without it,
 the helper uses the environment or saved shared key, or prompts if needed.
+With
+.BR --no-persist ,
+all instances added in that helper session remain active only until the
+supervisor restarts. Closing the helper does not stop them.
 .TP
 .B instance add
-Start and save a named instance immediately. Requires a running supervisor.
+Start a named instance immediately and save it unless
+.B --no-persist
+is set. Requires a running supervisor.
 The first instance prompts for an API key without echoing it. For automation,
 the key can come from
 .B --api-key
@@ -111,13 +119,19 @@ or
 Later instances inherit the saved key. Use
 .B --pipewire-device
 to select a PipeWire destination. Leave it unset to use the default output.
+With
+.BR --no-persist ,
+the new instance is temporary and is omitted from the saved configuration.
+Its supplied API key is also not saved. It stays running until removed or the
+supervisor restarts.
 .TP
 .B instance remove
-Gracefully stop one instance and remove its saved definition. Its session and
+Gracefully stop one instance and remove its saved definition, if any. Its session and
 cache files remain on disk. Other instances continue running.
 .TP
 .B instance list
-List configured instance IDs, Spotify device names, and PipeWire destinations.
+List running instance IDs, Spotify device names, and PipeWire destinations.
+Temporary instances are marked.
 .TP
 .B pair
 Replace one saved Spotify Connect session. Specify --instance ID when more than
@@ -162,7 +176,7 @@ soloistd instance list
 soloistd instance remove --name kitchen
 .fi
 .PP
-The manager persists additions and removals for future starts. The first
+The manager persists saved additions and removals for future starts. The first
 .B instance add
 prompts for an API key unless a shared key is saved. Save one ahead of time with
 .BR "soloistd setup --api-key KEY" ,
@@ -214,7 +228,7 @@ fallbacks are used when they are unset.
 .TP
 .I $XDG_CONFIG_HOME/soloistd/config.json
 Private persisted state, mode 0600 in a directory of mode 0700. The manager
-updates it when instances are added or removed or the shared API key changes.
+updates it when saved instances are added or removed or the shared API key changes.
 .TP
 .I $XDG_CONFIG_HOME/soloistd/control.sock
 Private management socket, mode 0600, present while the supervisor runs.

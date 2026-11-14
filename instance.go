@@ -27,6 +27,7 @@ type instanceInfo struct {
 	Name           string `json:"name"`
 	DeviceName     string `json:"device_name"`
 	PipewireDevice string `json:"pipewire_device,omitempty"`
+	NoPersist      bool   `json:"no_persist,omitempty"`
 }
 
 type instanceResponse struct {
@@ -145,7 +146,15 @@ func (a app) instanceCommand(ctx context.Context, args []string) error {
 			return err
 		}
 		for _, inst := range response.Instances {
-			fmt.Fprintf(a.stdout, "%s\t%s\t%s\n", inst.Name, inst.DeviceName, inst.PipewireDevice)
+			destination := inst.PipewireDevice
+			if inst.NoPersist {
+				if destination == "" {
+					destination = "(temporary)"
+				} else {
+					destination += " (temporary)"
+				}
+			}
+			fmt.Fprintf(a.stdout, "%s\t%s\t%s\n", inst.Name, inst.DeviceName, destination)
 		}
 		return nil
 	case "add":
@@ -155,11 +164,12 @@ func (a app) instanceCommand(ctx context.Context, args []string) error {
 		device := fs.String("device-name", "", "Spotify Connect device name")
 		pipewire := fs.String("pipewire-device", "", "PipeWire destination")
 		key := fs.String("api-key", "", "Soloist API key (prefer SOLOIST_API_KEY)")
+		noPersist := fs.Bool("no-persist", false, "run only until the supervisor restarts")
 		if err := fs.Parse(args[1:]); err != nil {
 			return &commandError{code: 2, err: err}
 		}
 		if fs.NArg() != 0 || *name == "" || *device == "" {
-			return &commandError{code: 2, err: errors.New("usage: soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY]")}
+			return &commandError{code: 2, err: errors.New("usage: soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY] [--no-persist]")}
 		}
 		if !instanceNamePattern.MatchString(*name) && *name != "default" {
 			return &commandError{code: 2, err: fmt.Errorf("invalid instance name %q", *name)}
@@ -196,7 +206,11 @@ func (a app) instanceCommand(ctx context.Context, args []string) error {
 				}
 			}
 		}
-		command := instanceCommand{Action: "add", Instance: config{Name: *name, DeviceName: strings.TrimSpace(*device), PipewireDevice: *pipewire, APIKey: *key}}
+		action := "add"
+		if *noPersist {
+			action = "add-temporary"
+		}
+		command := instanceCommand{Action: action, Instance: config{Name: *name, DeviceName: strings.TrimSpace(*device), PipewireDevice: *pipewire, APIKey: *key}}
 		if _, err := sendControl(ctx, p, command); err != nil {
 			return err
 		}

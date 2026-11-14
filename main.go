@@ -114,10 +114,10 @@ func (a app) usage() {
 Usage:
   soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--api-key KEY]
   soloistd run
-  soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY]
+  soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY] [--no-persist]
   soloistd instance remove --name ID
   soloistd instance list
-  soloistd tui [--api-key KEY]
+  soloistd tui [--api-key KEY] [--no-persist]
   soloistd pair [--instance ID]
   soloistd update
   soloistd ctl [--instance ID] COMMAND [ARGS...]
@@ -134,7 +134,8 @@ device is configured. 'setup --api-key KEY' alone saves or updates the shared
 key, including for running instances that inherit it. Other setup forms remain
 available for offline device configuration. 'tui' interactively lists, adds,
 and removes instances; --api-key sets the key for each instance added during
-that TUI session. New instances use the default PipeWire output.
+that TUI session. New instances use the default PipeWire output. --no-persist
+keeps new instances only until the supervisor restarts.
 `)
 }
 

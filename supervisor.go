@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -63,6 +64,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 	cancels := make(map[string]context.CancelFunc, len(instances))
 	removing := make(map[string]chan instanceResponse)
 	restartReason := make(map[string]string)
+	temporary := make(map[string]config)
 	byName := make(map[string]config, len(instances))
 	var running int
 	var generation uint64
@@ -181,10 +183,25 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 						default:
 						}
 					}
+					for name, raw := range temporary {
+						if raw.APIKey != "" || !active[name] {
+							continue
+						}
+						inst, err := resolveTemporaryInstance(raw, cfg.APIKey, p)
+						if err != nil {
+							continue
+						}
+						byName[name] = inst
+						restartReason[name] = "API key change"
+						select {
+						case signals[name] <- struct{}{}:
+						default:
+						}
+					}
 				}
 				respond(nil)
 			case "list":
-				info := make([]instanceInfo, 0, len(cfg.Instances)+1)
+				info := make([]instanceInfo, 0, len(cfg.Instances)+len(temporary)+1)
 				for _, inst := range cfg.activeInstances(p) {
 					name := inst.Name
 					if name == "" {
@@ -192,8 +209,17 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					}
 					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice})
 				}
+				names := make([]string, 0, len(temporary))
+				for name := range temporary {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				for _, name := range names {
+					inst := temporary[name]
+					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, NoPersist: true})
+				}
 				request.reply <- instanceResponse{Instances: info}
-			case "add":
+			case "add", "add-temporary":
 				inst := command.Instance
 				name := inst.Name
 				if name == "" || (name != "default" && !instanceNamePattern.MatchString(name)) {
@@ -202,6 +228,39 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				}
 				if active[name] {
 					respond(fmt.Errorf("instance %q already exists", name))
+					continue
+				}
+				if command.Action == "add-temporary" {
+					selected, err := resolveTemporaryInstance(inst, cfg.APIKey, p)
+					if err != nil {
+						respond(err)
+						continue
+					}
+					resolvedTemporary, err := resolveTemporaryInstances(temporary, cfg.APIKey, p)
+					if err != nil {
+						respond(err)
+						continue
+					}
+					resolved := append(cfg.activeInstances(p), resolvedTemporary...)
+					resolved = append(resolved, selected)
+					if err := validateInstancePaths(resolved, p); err != nil {
+						respond(err)
+						continue
+					}
+					if running == 0 {
+						if err := a.ensureBinary(daemonCtx, p); err != nil {
+							respond(err)
+							continue
+						}
+						if _, err := a.checkForUpdate(daemonCtx, p); err != nil {
+							fmt.Fprintf(a.stderr, "soloistd: update check failed; continuing with installed build: %v\n", err)
+						}
+					}
+					temporary[name] = inst
+					byName[name] = selected
+					start(selected)
+					fmt.Fprintf(a.stdout, "Started temporary Soloist instance %s\n", name)
+					respond(nil)
 					continue
 				}
 				next := cfg
@@ -224,7 +283,12 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					respond(err)
 					continue
 				}
-				resolved := next.activeInstances(p)
+				resolvedTemporary, err := resolveTemporaryInstances(temporary, next.APIKey, p)
+				if err != nil {
+					respond(err)
+					continue
+				}
+				resolved := append(next.activeInstances(p), resolvedTemporary...)
 				if err := validateInstancePaths(resolved, p); err != nil {
 					respond(err)
 					continue
@@ -256,6 +320,12 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				name := command.Name
 				if !active[name] {
 					respond(fmt.Errorf("unknown instance %q", name))
+					continue
+				}
+				if _, ok := temporary[name]; ok {
+					delete(temporary, name)
+					removing[name] = request.reply
+					cancels[name]()
 					continue
 				}
 				next := cfg
@@ -380,6 +450,39 @@ func validateInstancePaths(instances []config, p paths) error {
 		}
 	}
 	return nil
+}
+
+func resolveTemporaryInstance(raw config, sharedKey string, p paths) (config, error) {
+	if len(raw.Instances) != 0 {
+		return config{}, errors.New("nested instances are not supported")
+	}
+	if raw.Name == "default" {
+		raw.Name = ""
+		if raw.APIKey == "" {
+			raw.APIKey = sharedKey
+		}
+		if err := validateInstance(raw); err != nil {
+			return config{}, err
+		}
+		return raw, nil
+	}
+	probe := config{APIKey: sharedKey, Instances: []config{raw}}
+	if err := validateConfig(probe); err != nil {
+		return config{}, err
+	}
+	return probe.activeInstances(p)[0], nil
+}
+
+func resolveTemporaryInstances(temporary map[string]config, sharedKey string, p paths) ([]config, error) {
+	result := make([]config, 0, len(temporary))
+	for _, raw := range temporary {
+		inst, err := resolveTemporaryInstance(raw, sharedKey, p)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, inst)
+	}
+	return result, nil
 }
 
 func pathContains(parent, child string) bool {
