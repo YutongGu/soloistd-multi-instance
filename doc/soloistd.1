@@ -15,6 +15,10 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .br
 .B soloistd run
 .br
+.B soloistd tui
+.RB [ \-\-api\-key
+.IR KEY ]
+.br
 .B soloistd instance add
 .BI --name " ID"
 .BI --device-name " NAME"
@@ -86,6 +90,17 @@ device name is
 .B run
 Run all configured instances in the foreground. This is what the user service starts.
 .TP
+.B tui
+Open an interactive terminal helper connected to the running supervisor.
+It shows configured instances and lets you add or remove them. New instances
+use the default PipeWire output. The optional
+.B --api-key
+sets the default key for every instance added during this helper session. It
+takes priority over
+.B SOLOIST_API_KEY
+and the saved shared key, and does not change existing instances. Without it,
+the helper uses the environment or saved shared key, or prompts if needed.
+.TP
 .B instance add
 Start and save a named instance immediately. Requires a running supervisor.
 The first instance prompts for an API key without echoing it. For automation,
@@ -95,7 +110,7 @@ or
 .BR SOLOIST_API_KEY .
 Later instances inherit the saved key. Use
 .B --pipewire-device
-to select a PipeWire destination.
+to select a PipeWire destination. Leave it unset to use the default output.
 .TP
 .B instance remove
 Gracefully stop one instance and remove its saved definition. Its session and
@@ -134,15 +149,15 @@ removes only the unit and keeps the configuration and playback data.
 .B version
 Print the version and exit.
 .SH MULTIPLE INSTANCES
-Install the service and configure two named instances without restarting it.
-Replace the example PipeWire destinations with destinations on your machine:
+Install the service and open the terminal helper, or configure two named
+instances with direct commands. Without a destination, PipeWire uses the
+default output:
 .PP
 .nf
 soloistd service install
-soloistd instance add --name kitchen \\
-  --device-name Kitchen --pipewire-device alsa_output.kitchen
-soloistd instance add --name bedroom --device-name Bedroom \\
-  --pipewire-device alsa_output.bedroom
+soloistd tui
+soloistd instance add --name kitchen --device-name Kitchen
+soloistd instance add --name bedroom --device-name Bedroom
 soloistd instance list
 soloistd instance remove --name kitchen
 .fi

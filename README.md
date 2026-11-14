@@ -46,16 +46,24 @@ go build -o soloistd .
 install -Dm755 soloistd ~/.local/bin/soloistd
 ```
 
-The recommended way to manage instances is through the running supervisor. Install and start the service, then add devices without restarting it:
+The recommended way to manage instances is through the running supervisor. Install and start the service, then open the terminal helper:
 
 ```sh
 soloistd service install
-soloistd instance add --name kitchen --device-name "Kitchen" --pipewire-device alsa_output.kitchen
-soloistd instance add --name bedroom --device-name "Bedroom" --pipewire-device alsa_output.bedroom
+soloistd tui
+```
+
+The helper shows the configured instances and lets you add or remove them. It asks for an instance ID and Spotify device name. Each instance added through the helper uses the laptop's current default PipeWire output; no destination needs to be entered. It uses the saved shared API key, or prompts for one if needed. To choose a key for every instance added during one helper session, run `soloistd tui --api-key KEY`. That key takes priority over `SOLOIST_API_KEY` and the saved shared key; it does not change existing instances. The supervisor starts a new instance immediately. The service must be running for the helper to connect.
+
+The same actions are available as direct commands. For example, to launch two devices on the default PipeWire output:
+
+```sh
+soloistd instance add --name kitchen --device-name "Kitchen"
+soloistd instance add --name bedroom --device-name "Bedroom"
 soloistd instance list
 ```
 
-Replace the example PipeWire destinations with destinations on your machine. The first `instance add` prompts for an API key without echoing it. You can also supply `--api-key` or `SOLOIST_API_KEY` for automation. The manager saves the key privately and reuses it for later instances.
+Omitting `--pipewire-device` lets PipeWire choose the default output. Pass that option only when you want to target a specific destination. The first `instance add` prompts for an API key without echoing it. You can also supply `--api-key` or `SOLOIST_API_KEY` for automation. The manager saves the key privately and reuses it for later instances.
 
 To save the key before adding devices, run `soloistd setup --api-key KEY`. This creates or updates `config.json` without asking for a device name or downloading Soloist. You can also create the file yourself with only the shared key:
 
@@ -92,6 +100,8 @@ soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--
                                 Configure an instance offline and fetch Soloist;
                                 --api-key KEY alone saves the shared key
 soloistd run                    Run the foreground supervisor
+soloistd tui [--api-key KEY]
+                                Interactively view, add, and remove instances
 soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY]
                                 Start and save an instance immediately
 soloistd instance remove --name ID

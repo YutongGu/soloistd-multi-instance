@@ -77,6 +77,8 @@ func (a app) run(ctx context.Context, args []string) int {
 		err = a.service(ctx, args[1:])
 	case "instance":
 		err = a.instanceCommand(ctx, args[1:])
+	case "tui":
+		err = a.tui(ctx, args[1:])
 	case "version", "--version", "-V":
 		fmt.Fprintf(a.stdout, "soloistd %s\n", version)
 		return 0
@@ -115,6 +117,7 @@ Usage:
   soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY]
   soloistd instance remove --name ID
   soloistd instance list
+  soloistd tui [--api-key KEY]
   soloistd pair [--instance ID]
   soloistd update
   soloistd ctl [--instance ID] COMMAND [ARGS...]
@@ -129,7 +132,9 @@ Instance commands manage the running supervisor immediately and save changes
 for future starts. Use --instance ID with pair and ctl when more than one
 device is configured. 'setup --api-key KEY' alone saves or updates the shared
 key, including for running instances that inherit it. Other setup forms remain
-available for offline device configuration.
+available for offline device configuration. 'tui' interactively lists, adds,
+and removes instances; --api-key sets the key for each instance added during
+that TUI session. New instances use the default PipeWire output.
 `)
 }
 
