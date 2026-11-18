@@ -18,6 +18,7 @@ type config struct {
 	APIKey         string   `json:"api_key,omitempty"`
 	DataDir        string   `json:"data_dir,omitempty"`
 	CacheDir       string   `json:"cache_dir,omitempty"`
+	LogPath        string   `json:"log_path,omitempty"`
 	CacheSizeMB    *int     `json:"cache_size_mb,omitempty"`
 	PipewireDevice string   `json:"pipewire_device,omitempty"`
 	InitialVolume  *int     `json:"initial_volume,omitempty"`
@@ -95,6 +96,9 @@ func validateInstance(cfg config) error {
 	}
 	if cfg.APIKey == "" {
 		return errors.New("api_key is required")
+	}
+	if cfg.LogPath != "" && !filepath.IsAbs(cfg.LogPath) {
+		return errors.New("log_path must be an absolute file path")
 	}
 	if cfg.CacheSizeMB != nil && *cfg.CacheSizeMB != 0 && *cfg.CacheSizeMB < 100 {
 		return errors.New("cache_size_mb must be 0 or at least 100")
@@ -218,4 +222,15 @@ func (cfg config) soloistArgs(p paths) []string {
 		args = append(args, "--ws", cfg.WebSocket)
 	}
 	return args
+}
+
+func (cfg config) soloistLogPath(p paths) string {
+	if cfg.LogPath != "" {
+		return cfg.LogPath
+	}
+	name := cfg.Name
+	if name == "" {
+		name = "default"
+	}
+	return filepath.Join(p.managerLogs, name+".log")
 }

@@ -37,7 +37,7 @@ func TestTUIAddsAndViewsInstancesOnDefaultOutput(t *testing.T) {
 				case "add":
 					inst := req.command.Instance
 					added <- inst
-					instances = append(instances, instanceInfo{Name: inst.Name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice})
+					instances = append(instances, instanceInfo{Name: inst.Name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, LogPath: inst.LogPath})
 					req.reply <- instanceResponse{}
 				case "remove":
 					instances = nil
@@ -47,15 +47,16 @@ func TestTUIAddsAndViewsInstancesOnDefaultOutput(t *testing.T) {
 		}
 	}()
 	var output bytes.Buffer
-	a := app{stdin: strings.NewReader("a\nkitchen\nKitchen\nv\nr\nkitchen\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
+	logPath := p.managerLogs + "/custom-kitchen.log"
+	a := app{stdin: strings.NewReader("a\nkitchen\nKitchen\n" + logPath + "\nv\nr\nkitchen\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
 	if err := a.tui(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	inst := <-added
-	if inst.Name != "kitchen" || inst.DeviceName != "Kitchen" || inst.PipewireDevice != "" || inst.APIKey != "" {
+	if inst.Name != "kitchen" || inst.DeviceName != "Kitchen" || inst.PipewireDevice != "" || inst.LogPath != logPath || inst.APIKey != "" {
 		t.Fatalf("added instance = %#v", inst)
 	}
-	if !strings.Contains(output.String(), "kitchen — Kitchen (default PipeWire output)") || !strings.Contains(output.String(), "  (none)") {
+	if !strings.Contains(output.String(), "kitchen — Kitchen (default PipeWire output)") || !strings.Contains(output.String(), "log: "+logPath) || !strings.Contains(output.String(), "  (none)") {
 		t.Fatalf("unexpected TUI output:\n%s", output.String())
 	}
 	if strings.Contains(output.String(), "Soloist API key:") {
@@ -89,7 +90,7 @@ func TestTUIPromptsForKeyWhenNoneIsSaved(t *testing.T) {
 		}
 	}()
 	var output bytes.Buffer
-	a := app{stdin: strings.NewReader("a\nbedroom\n\nsecret\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
+	a := app{stdin: strings.NewReader("a\nbedroom\n\n\nsecret\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
 	if err := a.tui(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestTUIAPIKeyFlagAppliesToEveryNewInstance(t *testing.T) {
 		}
 	}()
 	var output bytes.Buffer
-	a := app{stdin: strings.NewReader("a\nkitchen\nKitchen\na\nbedroom\nBedroom\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
+	a := app{stdin: strings.NewReader("a\nkitchen\nKitchen\n\na\nbedroom\nBedroom\n\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
 	if err := a.tui(ctx, []string{"--api-key", "from-flag", "--no-persist"}); err != nil {
 		t.Fatal(err)
 	}

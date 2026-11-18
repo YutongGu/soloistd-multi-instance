@@ -12,6 +12,8 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .IR ID ]
 .RB [ \-\-pipewire\-device
 .IR DEST ]
+.RB [ \-\-log\-path
+.IR FILE ]
 .br
 .B soloistd run
 .br
@@ -25,6 +27,8 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .BI --device-name " NAME"
 .RB [ --pipewire-device
 .IR DEST ]
+.RB [ --log-path
+.IR FILE ]
 .RB [ --api-key
 .IR KEY ]
 .RB [ --no-persist ]
@@ -105,7 +109,8 @@ the helper uses the environment or saved shared key, or prompts if needed.
 With
 .BR --no-persist ,
 all instances added in that helper session remain active only until the
-supervisor restarts. Closing the helper does not stop them.
+supervisor restarts. Closing the helper does not stop them. The helper also
+prompts for an optional log path for each new instance.
 .TP
 .B instance add
 Start a named instance immediately and save it unless
@@ -119,6 +124,9 @@ or
 Later instances inherit the saved key. Use
 .B --pipewire-device
 to select a PipeWire destination. Leave it unset to use the default output.
+Use
+.B --log-path
+to route the instance's Soloist output to an absolute file path.
 With
 .BR --no-persist ,
 the new instance is temporary and is omitted from the saved configuration.
@@ -130,7 +138,7 @@ Gracefully stop one instance and remove its saved definition, if any. Its sessio
 cache files remain on disk. Other instances continue running.
 .TP
 .B instance list
-List running instance IDs, Spotify device names, and PipeWire destinations.
+List running instance IDs, Spotify device names, PipeWire destinations, and log paths.
 Temporary instances are marked.
 .TP
 .B pair
@@ -208,6 +216,16 @@ and
 paths must not overlap between instances. Give each instance a distinct
 .B websocket
 listen address if that option is configured.
+.SH INSTANCE LOGS
+Soloist stdout and stderr are appended to a separate file for each instance.
+The default path is
+.IR $XDG_STATE_HOME/soloistd/logs/ID.log ,
+with
+.I default.log
+for the original unnamed instance. Created files have mode 0600. Logs remain
+after an instance is removed and need external rotation or cleanup.
+.B service logs
+follows the supervisor's journal messages, not Soloist output.
 .SH ENVIRONMENT
 .TP
 .B SOLOIST_API_KEY
@@ -217,12 +235,13 @@ or
 .BR "soloistd instance add" .
 Use the interactive prompt to avoid typing the key into shell history.
 .TP
-.BR XDG_CONFIG_HOME ", " XDG_DATA_HOME ", " XDG_CACHE_HOME
+.BR XDG_CONFIG_HOME ", " XDG_DATA_HOME ", " XDG_CACHE_HOME ", " XDG_STATE_HOME
 Locate the files below. The usual
 .IR ~/.config ,
 .IR ~/.local/share ,
+.IR ~/.cache ,
 and
-.I ~/.cache
+.I ~/.local/state
 fallbacks are used when they are unset.
 .SH FILES
 .TP
@@ -250,6 +269,10 @@ State for a named instance.
 .TP
 .I $XDG_CACHE_HOME/soloistd/ID
 Cache for a named instance.
+.TP
+.I $XDG_STATE_HOME/soloistd/logs/ID.log
+Soloist stdout and stderr for an instance. The unnamed instance uses
+.IR default.log .
 .TP
 .I $XDG_CONFIG_HOME/systemd/user/soloistd.service
 Generated user unit. It contains only the path to

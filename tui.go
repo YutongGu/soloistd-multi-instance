@@ -76,7 +76,7 @@ func (a app) tui(ctx context.Context, args []string) error {
 			if inst.NoPersist {
 				destination += "; temporary"
 			}
-			fmt.Fprintf(a.stdout, "  %s — %s (%s)\n", inst.Name, inst.DeviceName, destination)
+			fmt.Fprintf(a.stdout, "  %s — %s (%s)\n    log: %s\n", inst.Name, inst.DeviceName, destination, inst.LogPath)
 		}
 		return nil
 	}
@@ -108,6 +108,10 @@ func (a app) tui(ctx context.Context, args []string) error {
 			}
 			if device == "" {
 				device = name
+			}
+			logPath, err := prompt("Log path [default]: ")
+			if err != nil {
+				return err
 			}
 			cfg, err := loadConfigOptional(p)
 			if err != nil {
@@ -143,7 +147,7 @@ func (a app) tui(ctx context.Context, args []string) error {
 			if *noPersist {
 				action = "add-temporary"
 			}
-			_, err = sendControl(ctx, p, instanceCommand{Action: action, Instance: config{Name: name, DeviceName: device, APIKey: key}})
+			_, err = sendControl(ctx, p, instanceCommand{Action: action, Instance: config{Name: name, DeviceName: device, LogPath: logPath, APIKey: key}})
 			if err != nil {
 				fmt.Fprintf(a.stdout, "Could not add instance: %v\n", err)
 				continue

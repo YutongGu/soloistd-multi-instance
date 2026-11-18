@@ -50,6 +50,7 @@ func TestRunDaemonRefreshesExitTenAndRestarts(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	p, err := resolvePaths()
 	if err != nil {
 		t.Fatal(err)
@@ -194,8 +195,9 @@ func TestRunDaemonPeriodicallyUpdatesAndRestarts(t *testing.T) {
 	if err := a.runDaemon(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout.String(), "Restarting Soloist with the new build") || !strings.Contains(stdout.String(), "new build ran") {
-		t.Fatalf("stdout does not show update restart:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
+	logData, err := os.ReadFile(filepath.Join(p.managerLogs, "default.log"))
+	if err != nil || !strings.Contains(stdout.String(), "Restarting Soloist with the new build") || !strings.Contains(string(logData), "new build ran") {
+		t.Fatalf("update restart not logged: stdout=%q instance log=%q err=%v stderr=%q", stdout.String(), logData, err, stderr.String())
 	}
 }
 
@@ -237,6 +239,7 @@ func testPaths(t *testing.T) paths {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(root, "config"))
 	t.Setenv("XDG_DATA_HOME", filepath.Join(root, "data"))
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(root, "cache"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(root, "state"))
 	p, err := resolvePaths()
 	if err != nil {
 		t.Fatal(err)

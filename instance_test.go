@@ -28,6 +28,8 @@ name= key=
 while [ "$#" -gt 0 ]; do
  case "$1" in --device-name) name=$2; shift 2;; --api-key) key=$2; shift 2;; *) shift;; esac
 done
+printf 'instance-stdout:%s\n' "$name"
+printf 'instance-stderr:%s\n' "$name" >&2
 printf 'start:%s:%s\n' "$name" "$key" >> "$SOLOIST_TEST_EVENTS"
 trap 'printf "stop:%s\n" "$name" >> "$SOLOIST_TEST_EVENTS"; exit 0' TERM
 while :; do sleep 0.05; done
@@ -74,15 +76,20 @@ while :; do sleep 0.05; done
 		t.Fatalf("socket mode = %v, %v", socketInfo, err)
 	}
 	temporaryCLI := app{stdin: strings.NewReader(""), stdout: &bytes.Buffer{}, stderr: &bytes.Buffer{}}
-	if err := temporaryCLI.instanceCommand(ctx, []string{"add", "--name", "temp", "--device-name", "Temporary", "--api-key", "secret", "--no-persist"}); err != nil {
+	tempLog := filepath.Join(t.TempDir(), "custom", "temp.log")
+	if err := temporaryCLI.instanceCommand(ctx, []string{"add", "--name", "temp", "--device-name", "Temporary", "--api-key", "secret", "--log-path", tempLog, "--no-persist"}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor("start:Temporary:secret")
+	logData, err := os.ReadFile(tempLog)
+	if err != nil || !strings.Contains(string(logData), "instance-stdout:Temporary") || !strings.Contains(string(logData), "instance-stderr:Temporary") {
+		t.Fatalf("temporary instance log = %q, %v", logData, err)
+	}
 	if _, err := os.Stat(p.configFile); !os.IsNotExist(err) {
 		t.Fatalf("temporary add wrote config: %v", err)
 	}
 	temporaryList, err := sendControl(ctx, p, instanceCommand{Action: "list"})
-	if err != nil || len(temporaryList.Instances) != 1 || !temporaryList.Instances[0].NoPersist {
+	if err != nil || len(temporaryList.Instances) != 1 || !temporaryList.Instances[0].NoPersist || temporaryList.Instances[0].LogPath != tempLog {
 		t.Fatalf("temporary list = %#v, %v", temporaryList, err)
 	}
 	var listed bytes.Buffer

@@ -67,6 +67,14 @@ soloistd instance list
 
 For one temporary instance, use `soloistd instance add --name guest --device-name "Guest" --no-persist`. This does not write the instance or a newly supplied key to `config.json`. A previously saved shared key remains available.
 
+Each instance writes its Soloist stdout and stderr to a separate file at `$XDG_STATE_HOME/soloistd/logs/ID.log` (or `~/.local/state/soloistd/logs/ID.log` when `XDG_STATE_HOME` is unset). The original unnamed instance uses `default.log`. Pass an absolute path to place an instance's log elsewhere:
+
+```sh
+soloistd instance add --name kitchen --device-name "Kitchen" --log-path /var/log/soloist/kitchen.log
+```
+
+The TUI also prompts for an optional log path. `instance list` prints the log path as its fourth column. Follow a file with `tail -f /path/to/instance.log`. `soloistd service logs` shows supervisor messages in the systemd journal; Soloist output goes to its instance file. Logs are appended across instance restarts and remain after removal. Created files have mode `0600`; arrange rotation or cleanup for long-running instances.
+
 Omitting `--pipewire-device` lets PipeWire choose the default output. Pass that option only when you want to target a specific destination. The first `instance add` prompts for an API key without echoing it. You can also supply `--api-key` or `SOLOIST_API_KEY` for automation. For saved instances, the manager saves the shared key privately and reuses it for later instances.
 
 To save the key before adding devices, run `soloistd setup --api-key KEY`. This creates or updates `config.json` without asking for a device name or downloading Soloist. You can also create the file yourself with only the shared key:
@@ -83,7 +91,7 @@ Instances start immediately. Remove one without stopping the others:
 soloistd instance remove --name kitchen
 ```
 
-Removal keeps its Spotify session and cache. Adding the same ID again reuses those files. `instance list` shows the active IDs, Spotify device names, and PipeWire destinations. The commands require a running supervisor, either from the systemd service or `soloistd run`. After upgrading an already running service from a version without instance commands, restart it once to enable live management.
+Removal keeps its Spotify session and cache. Adding the same ID again reuses those files. `instance list` shows the active IDs, Spotify device names, PipeWire destinations, and log paths. The commands require a running supervisor, either from the systemd service or `soloistd run`. Restart a service installed with an older version once after upgrading to enable the new log routing.
 
 For compatibility, `soloistd setup` without a key-only invocation still configures a device and downloads Soloist. Its interactive API-key prompt does not echo. The default Spotify Connect device name is `soloistd@<hostname>` (for example, `soloistd@framework13`):
 
@@ -100,23 +108,23 @@ Open Spotify on the same local network, open the device picker, and select a con
 ## Commands
 
 ```text
-soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--api-key KEY]
+soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--log-path FILE] [--api-key KEY]
                                 Configure an instance offline and fetch Soloist;
                                 --api-key KEY alone saves the shared key
 soloistd run                    Run the foreground supervisor
 soloistd tui [--api-key KEY] [--no-persist]
                                 Interactively view, add, and remove instances
-soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--api-key KEY] [--no-persist]
+soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--log-path FILE] [--api-key KEY] [--no-persist]
                                 Start an instance; save it unless --no-persist
 soloistd instance remove --name ID
                                 Stop and remove an instance; keep its data
-soloistd instance list          List active instances, marking temporary ones
+soloistd instance list          List active instances and log paths, marking temporary ones
 soloistd pair [--instance ID]   Replace one saved Spotify Connect session
 soloistd update                 Fetch the current official Soloist build
 soloistd ctl [--instance ID] status
                                 Run a `soloist ctl` command for one instance
 soloistd service status         Show user-service status
-soloistd service logs           Follow user-service logs
+soloistd service logs           Follow supervisor messages in the user-service journal
 soloistd service restart        Restart the user service
 soloistd service uninstall      Remove only the unit; keep config and data
 ```
@@ -135,17 +143,18 @@ With multiple instances, `pair` and `ctl` require `--instance ID` (use `default`
 | Original unnamed instance cache | `$XDG_CACHE_HOME/soloist` |
 | Named instance state | `$XDG_DATA_HOME/soloistd/instances/ID` |
 | Named instance cache | `$XDG_CACHE_HOME/soloistd/ID` |
+| Instance logs | `$XDG_STATE_HOME/soloistd/logs/ID.log` (`default.log` for the unnamed instance) |
 | systemd user unit | `$XDG_CONFIG_HOME/systemd/user/soloistd.service` |
 
-The usual `~/.config`, `~/.local/share`, and `~/.cache` fallbacks are used when the XDG variables are unset. The config directory is mode `0700`; both `config.json` and the live management socket are mode `0600`. The manager updates `config.json` internally when you add or remove a saved instance or change the shared API key, so the change survives a restart. The generated unit contains only the path to `soloistd`; it never contains the API key. Soloist itself requires the key as a command-line argument, so the key can still be visible to same-user process inspection while Soloist is running.
+The usual `~/.config`, `~/.local/share`, `~/.cache`, and `~/.local/state` fallbacks are used when the XDG variables are unset. The config directory is mode `0700`; both `config.json` and the live management socket are mode `0600`. The manager updates `config.json` internally when you add or remove a saved instance or change the shared API key, so the change survives a restart. The generated unit contains only the path to `soloistd`; it never contains the API key. Soloist itself requires the key as a command-line argument, so the key can still be visible to same-user process inspection while Soloist is running.
 
-Additional documented Soloist options can be set directly in `config.json`: `data_dir`, `cache_dir`, `cache_size_mb`, `pipewire_device`, `initial_volume`, and `websocket`. The original top-level device settings still work. Named devices live in the `instances` array and inherit the top-level `api_key` unless they specify their own. For example:
+Additional options can be set directly in `config.json`: `data_dir`, `cache_dir`, `cache_size_mb`, `pipewire_device`, `log_path`, `initial_volume`, and `websocket`. The original top-level device settings still work. Named devices live in the `instances` array and inherit the top-level `api_key` unless they specify their own. For example:
 
 ```json
 {
   "api_key": "your-key",
   "instances": [
-    {"name": "kitchen", "device_name": "Kitchen", "pipewire_device": "alsa_output.kitchen"},
+    {"name": "kitchen", "device_name": "Kitchen", "pipewire_device": "alsa_output.kitchen", "log_path": "/var/log/soloist/kitchen.log"},
     {"name": "bedroom", "device_name": "Bedroom", "pipewire_device": "alsa_output.bedroom"}
   ]
 }

@@ -41,6 +41,11 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 	if err := validateInstancePaths(instances, p); err != nil {
 		return err
 	}
+	for _, inst := range instances {
+		if err := checkInstanceLog(inst.soloistLogPath(p)); err != nil {
+			return err
+		}
+	}
 	if len(instances) > 0 {
 		if err := a.ensureBinary(ctx, p); err != nil {
 			return err
@@ -81,7 +86,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 		running++
 		startedGeneration := generation
 		go func() {
-			code, err, updated := a.runSoloistOnce(workerCtx, p.soloistBinary(), inst.soloistArgs(p), ch)
+			code, err, updated := a.runSoloistOnce(workerCtx, p.soloistBinary(), inst.soloistArgs(p), inst.soloistLogPath(p), ch)
 			results <- instanceResult{name: name, generation: startedGeneration, code: code, err: err, updated: updated}
 		}()
 	}
@@ -207,7 +212,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					if name == "" {
 						name = "default"
 					}
-					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice})
+					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, LogPath: inst.soloistLogPath(p)})
 				}
 				names := make([]string, 0, len(temporary))
 				for name := range temporary {
@@ -216,7 +221,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				sort.Strings(names)
 				for _, name := range names {
 					inst := temporary[name]
-					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, NoPersist: true})
+					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, LogPath: inst.soloistLogPath(p), NoPersist: true})
 				}
 				request.reply <- instanceResponse{Instances: info}
 			case "add", "add-temporary":
@@ -247,6 +252,10 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 						respond(err)
 						continue
 					}
+					if err := checkInstanceLog(selected.soloistLogPath(p)); err != nil {
+						respond(err)
+						continue
+					}
 					if running == 0 {
 						if err := a.ensureBinary(daemonCtx, p); err != nil {
 							respond(err)
@@ -269,7 +278,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 						respond(fmt.Errorf("instance %q already exists", name))
 						continue
 					}
-					next.DeviceName, next.PipewireDevice = inst.DeviceName, inst.PipewireDevice
+					next.DeviceName, next.PipewireDevice, next.LogPath = inst.DeviceName, inst.PipewireDevice, inst.LogPath
 					if inst.APIKey != "" {
 						next.APIKey = inst.APIKey
 					}
@@ -293,6 +302,15 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					respond(err)
 					continue
 				}
+				selected, err := next.instance(name, p)
+				if err != nil {
+					respond(err)
+					continue
+				}
+				if err := checkInstanceLog(selected.soloistLogPath(p)); err != nil {
+					respond(err)
+					continue
+				}
 				if running == 0 {
 					if err := a.ensureBinary(daemonCtx, p); err != nil {
 						respond(err)
@@ -307,11 +325,6 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					continue
 				}
 				cfg = next
-				selected, err := cfg.instance(name, p)
-				if err != nil {
-					respond(err)
-					continue
-				}
 				byName[name] = selected
 				start(selected)
 				fmt.Fprintf(a.stdout, "Started Soloist instance %s\n", name)
@@ -334,6 +347,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					next.PipewireDevice = ""
 					next.DataDir = ""
 					next.CacheDir = ""
+					next.LogPath = ""
 					next.CacheSizeMB = nil
 					next.InitialVolume = nil
 					next.WebSocket = ""
@@ -416,6 +430,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 func validateInstancePaths(instances []config, p paths) error {
 	dataDirs := map[string]string{}
 	cacheDirs := map[string]string{}
+	logPaths := map[string]string{}
 	check := func(name, field, dir string, seen map[string]string) error {
 		if dir == "" {
 			return fmt.Errorf("instance %s has empty %s", name, field)
@@ -448,6 +463,20 @@ func validateInstancePaths(instances []config, p paths) error {
 		if err := check(name, "cache_dir", cacheDir, cacheDirs); err != nil {
 			return err
 		}
+		logPath := inst.soloistLogPath(p)
+		if !filepath.IsAbs(logPath) {
+			return fmt.Errorf("instance %s log_path must be absolute: %q", name, logPath)
+		}
+		logPath = filepath.Clean(logPath)
+		if other, exists := logPaths[logPath]; exists {
+			return fmt.Errorf("instances %s and %s share log_path %q", other, name, logPath)
+		}
+		for _, reserved := range []string{p.configFile, p.unitFile, p.controlSocket(), p.soloistBinary(), p.releaseMetadata()} {
+			if reserved != "" && logPath == filepath.Clean(reserved) {
+				return fmt.Errorf("instance %s log_path overlaps a soloistd file: %q", name, logPath)
+			}
+		}
+		logPaths[logPath] = name
 	}
 	return nil
 }
@@ -510,9 +539,14 @@ func (a app) watchForUpdates(ctx context.Context) <-chan struct{} {
 	return ticks
 }
 
-func (a app) runSoloistOnce(ctx context.Context, binary string, args []string, updates <-chan struct{}) (int, error, bool) {
+func (a app) runSoloistOnce(ctx context.Context, binary string, args []string, logPath string, updates <-chan struct{}) (int, error, bool) {
+	logFile, err := openInstanceLog(logPath)
+	if err != nil {
+		return 1, fmt.Errorf("open Soloist log %s: %w", logPath, err), false
+	}
+	defer logFile.Close()
 	cmd := exec.Command(binary, args...)
-	cmd.Stdout, cmd.Stderr = a.stdout, a.stderr
+	cmd.Stdout, cmd.Stderr = logFile, logFile
 	if err := cmd.Start(); err != nil {
 		return 1, err, false
 	}

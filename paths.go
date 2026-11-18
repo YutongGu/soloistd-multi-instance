@@ -10,6 +10,7 @@ import (
 type paths struct {
 	configFile   string
 	managerData  string
+	managerLogs  string
 	soloistData  string
 	soloistCache string
 	unitFile     string
@@ -33,10 +34,15 @@ func resolvePaths() (paths, error) {
 	if cacheHome == "" {
 		cacheHome = filepath.Join(home, ".cache")
 	}
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		stateHome = filepath.Join(home, ".local", "state")
+	}
 
 	return paths{
 		configFile:   filepath.Join(configHome, "soloistd", "config.json"),
 		managerData:  filepath.Join(dataHome, "soloistd"),
+		managerLogs:  filepath.Join(stateHome, "soloistd", "logs"),
 		soloistData:  filepath.Join(dataHome, "soloist"),
 		soloistCache: filepath.Join(cacheHome, "soloist"),
 		unitFile:     filepath.Join(configHome, "systemd", "user", "soloistd.service"),
