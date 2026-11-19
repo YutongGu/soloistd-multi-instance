@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -21,7 +22,7 @@ func TestSoloistOutputUsesSeparatePrivateLogFiles(t *testing.T) {
 	a := app{stdout: &stdout, stderr: &stderr}
 	logs := filepath.Join(root, "logs")
 	for _, name := range []string{"kitchen", "bedroom", "kitchen"} {
-		code, err, updated := a.runSoloistOnce(context.Background(), binary, []string{name}, filepath.Join(logs, name+".log"), nil)
+		code, err, updated := a.runSoloistOnce(context.Background(), binary, []string{name}, filepath.Join(logs, name+".log"), nil, nil)
 		if code != 0 || err != nil || updated {
 			t.Fatalf("run %s: code=%d err=%v updated=%v", name, code, err, updated)
 		}
@@ -49,6 +50,20 @@ func TestSoloistOutputUsesSeparatePrivateLogFiles(t *testing.T) {
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("Soloist output reached manager streams: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestLoginFailureWriterDetectsSplitMessage(t *testing.T) {
+	var output bytes.Buffer
+	var failed atomic.Bool
+	writer := &loginFailureWriter{output: &output, failed: &failed}
+	for _, piece := range []string{"unrelated\nlogin failed: make sure --api-", "key is valid\n"} {
+		if _, err := writer.Write([]byte(piece)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !failed.Load() || output.String() != "unrelated\n"+invalidAPIKeyMessage+"\n" {
+		t.Fatalf("failed=%v output=%q", failed.Load(), output.String())
 	}
 }
 

@@ -19,6 +19,7 @@ type config struct {
 	DataDir        string   `json:"data_dir,omitempty"`
 	CacheDir       string   `json:"cache_dir,omitempty"`
 	LogPath        string   `json:"log_path,omitempty"`
+	MonitorAPIKey  bool     `json:"monitor_api_key,omitempty"`
 	CacheSizeMB    *int     `json:"cache_size_mb,omitempty"`
 	PipewireDevice string   `json:"pipewire_device,omitempty"`
 	InitialVolume  *int     `json:"initial_volume,omitempty"`

@@ -49,11 +49,11 @@ func TestTUIAddsAndViewsInstancesOnDefaultOutput(t *testing.T) {
 	var output bytes.Buffer
 	logPath := p.managerLogs + "/custom-kitchen.log"
 	a := app{stdin: strings.NewReader("a\nkitchen\nKitchen\n" + logPath + "\nv\nr\nkitchen\nq\n"), stdout: &output, stderr: &bytes.Buffer{}}
-	if err := a.tui(ctx, nil); err != nil {
+	if err := a.tui(ctx, []string{"--monitor-api-key"}); err != nil {
 		t.Fatal(err)
 	}
 	inst := <-added
-	if inst.Name != "kitchen" || inst.DeviceName != "Kitchen" || inst.PipewireDevice != "" || inst.LogPath != logPath || inst.APIKey != "" {
+	if inst.Name != "kitchen" || inst.DeviceName != "Kitchen" || inst.PipewireDevice != "" || inst.LogPath != logPath || !inst.MonitorAPIKey || inst.APIKey != "" {
 		t.Fatalf("added instance = %#v", inst)
 	}
 	if !strings.Contains(output.String(), "kitchen — Kitchen (default PipeWire output)") || !strings.Contains(output.String(), "log: "+logPath) || !strings.Contains(output.String(), "  (none)") {

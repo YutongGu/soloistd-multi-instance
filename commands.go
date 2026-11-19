@@ -25,6 +25,7 @@ func (a app) setup(ctx context.Context, args []string) error {
 	instanceName := fs.String("instance", "", "instance identifier (letters, digits, _ or -)")
 	pipewireDevice := fs.String("pipewire-device", "", "PipeWire destination for this instance")
 	logPath := fs.String("log-path", "", "absolute path for this instance's Soloist log")
+	monitorAPIKey := fs.Bool("monitor-api-key", false, "detect Soloist API-key login failures in this instance's log")
 	if err := fs.Parse(args); err != nil {
 		return &commandError{code: 2, err: err}
 	}
@@ -37,7 +38,7 @@ func (a app) setup(ctx context.Context, args []string) error {
 			keyFlag = true
 		}
 	})
-	if keyFlag && *deviceName == "" && *instanceName == "" && *pipewireDevice == "" && *logPath == "" {
+	if keyFlag && *deviceName == "" && *instanceName == "" && *pipewireDevice == "" && *logPath == "" && !*monitorAPIKey {
 		return a.setupAPIKey(ctx, *apiKey)
 	}
 
@@ -115,6 +116,9 @@ func (a app) setup(ctx context.Context, args []string) error {
 		if *logPath != "" {
 			cfg.LogPath = *logPath
 		}
+		if *monitorAPIKey {
+			cfg.MonitorAPIKey = true
+		}
 	} else {
 		found := false
 		for i := range cfg.Instances {
@@ -126,12 +130,15 @@ func (a app) setup(ctx context.Context, args []string) error {
 				if *logPath != "" {
 					cfg.Instances[i].LogPath = *logPath
 				}
+				if *monitorAPIKey {
+					cfg.Instances[i].MonitorAPIKey = true
+				}
 				found = true
 				break
 			}
 		}
 		if !found {
-			cfg.Instances = append(cfg.Instances, config{Name: *instanceName, DeviceName: *deviceName, PipewireDevice: *pipewireDevice, LogPath: *logPath})
+			cfg.Instances = append(cfg.Instances, config{Name: *instanceName, DeviceName: *deviceName, PipewireDevice: *pipewireDevice, LogPath: *logPath, MonitorAPIKey: *monitorAPIKey})
 		}
 	}
 	if err := saveConfig(p, cfg); err != nil {

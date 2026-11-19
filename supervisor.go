@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -71,6 +72,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 	restartReason := make(map[string]string)
 	temporary := make(map[string]config)
 	byName := make(map[string]config, len(instances))
+	loginFailures := make(map[string]*atomic.Bool, len(instances))
 	var running int
 	var generation uint64
 	start := func(inst config) {
@@ -83,10 +85,16 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 		cancels[name] = workerCancel
 		signals[name] = ch
 		active[name] = true
+		failure := &atomic.Bool{}
+		loginFailures[name] = failure
 		running++
 		startedGeneration := generation
 		go func() {
-			code, err, updated := a.runSoloistOnce(workerCtx, p.soloistBinary(), inst.soloistArgs(p), inst.soloistLogPath(p), ch)
+			var monitor *atomic.Bool
+			if inst.MonitorAPIKey {
+				monitor = failure
+			}
+			code, err, updated := a.runSoloistOnce(workerCtx, p.soloistBinary(), inst.soloistArgs(p), inst.soloistLogPath(p), ch, monitor)
 			results <- instanceResult{name: name, generation: startedGeneration, code: code, err: err, updated: updated}
 		}()
 	}
@@ -166,9 +174,6 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 						if name == "" {
 							name = "default"
 						}
-						if !active[name] {
-							continue
-						}
 						if name != "default" {
 							inherited := false
 							for _, saved := range cfg.Instances {
@@ -182,6 +187,12 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 							}
 						}
 						byName[name] = inst
+						if !active[name] {
+							if failure := loginFailures[name]; failure != nil && failure.Load() {
+								start(inst)
+							}
+							continue
+						}
 						restartReason[name] = "API key change"
 						select {
 						case signals[name] <- struct{}{}:
@@ -189,7 +200,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 						}
 					}
 					for name, raw := range temporary {
-						if raw.APIKey != "" || !active[name] {
+						if raw.APIKey != "" {
 							continue
 						}
 						inst, err := resolveTemporaryInstance(raw, cfg.APIKey, p)
@@ -197,6 +208,12 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 							continue
 						}
 						byName[name] = inst
+						if !active[name] {
+							if failure := loginFailures[name]; failure != nil && failure.Load() {
+								start(inst)
+							}
+							continue
+						}
 						restartReason[name] = "API key change"
 						select {
 						case signals[name] <- struct{}{}:
@@ -206,13 +223,22 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				}
 				respond(nil)
 			case "list":
+				status := func(name string) string {
+					if failure := loginFailures[name]; failure != nil && failure.Load() {
+						return "api-key-login-failed"
+					}
+					if active[name] {
+						return "running"
+					}
+					return "stopped"
+				}
 				info := make([]instanceInfo, 0, len(cfg.Instances)+len(temporary)+1)
 				for _, inst := range cfg.activeInstances(p) {
 					name := inst.Name
 					if name == "" {
 						name = "default"
 					}
-					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, LogPath: inst.soloistLogPath(p)})
+					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, LogPath: inst.soloistLogPath(p), Status: status(name)})
 				}
 				names := make([]string, 0, len(temporary))
 				for name := range temporary {
@@ -221,7 +247,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				sort.Strings(names)
 				for _, name := range names {
 					inst := temporary[name]
-					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, LogPath: inst.soloistLogPath(p), NoPersist: true})
+					info = append(info, instanceInfo{Name: name, DeviceName: inst.DeviceName, PipewireDevice: inst.PipewireDevice, LogPath: inst.soloistLogPath(p), Status: status(name), NoPersist: true})
 				}
 				request.reply <- instanceResponse{Instances: info}
 			case "add", "add-temporary":
@@ -231,7 +257,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					respond(fmt.Errorf("invalid instance name %q", name))
 					continue
 				}
-				if active[name] {
+				if _, exists := byName[name]; exists {
 					respond(fmt.Errorf("instance %q already exists", name))
 					continue
 				}
@@ -278,7 +304,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 						respond(fmt.Errorf("instance %q already exists", name))
 						continue
 					}
-					next.DeviceName, next.PipewireDevice, next.LogPath = inst.DeviceName, inst.PipewireDevice, inst.LogPath
+					next.DeviceName, next.PipewireDevice, next.LogPath, next.MonitorAPIKey = inst.DeviceName, inst.PipewireDevice, inst.LogPath, inst.MonitorAPIKey
 					if inst.APIKey != "" {
 						next.APIKey = inst.APIKey
 					}
@@ -331,12 +357,19 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				respond(nil)
 			case "remove":
 				name := command.Name
-				if !active[name] {
+				if _, exists := byName[name]; !exists {
 					respond(fmt.Errorf("unknown instance %q", name))
 					continue
 				}
 				if _, ok := temporary[name]; ok {
 					delete(temporary, name)
+					if !active[name] {
+						delete(byName, name)
+						delete(loginFailures, name)
+						delete(signals, name)
+						respond(nil)
+						continue
+					}
 					removing[name] = request.reply
 					cancels[name]()
 					continue
@@ -348,6 +381,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					next.DataDir = ""
 					next.CacheDir = ""
 					next.LogPath = ""
+					next.MonitorAPIKey = false
 					next.CacheSizeMB = nil
 					next.InitialVolume = nil
 					next.WebSocket = ""
@@ -364,6 +398,14 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 					continue
 				}
 				cfg = next
+				if !active[name] {
+					delete(temporary, name)
+					delete(byName, name)
+					delete(loginFailures, name)
+					delete(signals, name)
+					respond(nil)
+					continue
+				}
 				removing[name] = request.reply
 				cancels[name]()
 			default:
@@ -378,6 +420,7 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				delete(removing, result.name)
 				delete(signals, result.name)
 				delete(byName, result.name)
+				delete(loginFailures, result.name)
 				delete(restartReason, result.name)
 				reply <- instanceResponse{}
 				fmt.Fprintf(a.stdout, "Stopped Soloist instance %s\n", result.name)
@@ -415,6 +458,10 @@ func (a app) runDaemon(ctx context.Context, args []string) error {
 				broadcast()
 				fmt.Fprintf(a.stdout, "Restarting Soloist with the new build... (instance %s)\n", result.name)
 				start(byName[result.name])
+				continue
+			}
+			if failure := loginFailures[result.name]; failure != nil && failure.Load() && byName[result.name].MonitorAPIKey {
+				fmt.Fprintf(a.stderr, "Soloist instance %s reported an API-key login failure; inspect %s\n", result.name, byName[result.name].soloistLogPath(p))
 				continue
 			}
 			cancel()
@@ -539,14 +586,19 @@ func (a app) watchForUpdates(ctx context.Context) <-chan struct{} {
 	return ticks
 }
 
-func (a app) runSoloistOnce(ctx context.Context, binary string, args []string, logPath string, updates <-chan struct{}) (int, error, bool) {
+func (a app) runSoloistOnce(ctx context.Context, binary string, args []string, logPath string, updates <-chan struct{}, loginFailure *atomic.Bool) (int, error, bool) {
 	logFile, err := openInstanceLog(logPath)
 	if err != nil {
 		return 1, fmt.Errorf("open Soloist log %s: %w", logPath, err), false
 	}
 	defer logFile.Close()
 	cmd := exec.Command(binary, args...)
-	cmd.Stdout, cmd.Stderr = logFile, logFile
+	if loginFailure != nil {
+		writer := &loginFailureWriter{output: logFile, failed: loginFailure}
+		cmd.Stdout, cmd.Stderr = writer, writer
+	} else {
+		cmd.Stdout, cmd.Stderr = logFile, logFile
+	}
 	if err := cmd.Start(); err != nil {
 		return 1, err, false
 	}

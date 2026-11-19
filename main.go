@@ -112,12 +112,12 @@ func (a app) usage() {
 	fmt.Fprint(a.stdout, `soloistd manages Spotify Soloist as a user service.
 
 Usage:
-  soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--log-path FILE] [--api-key KEY]
+  soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--log-path FILE] [--monitor-api-key] [--api-key KEY]
   soloistd run
-  soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--log-path FILE] [--api-key KEY] [--no-persist]
+  soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--log-path FILE] [--monitor-api-key] [--api-key KEY] [--no-persist]
   soloistd instance remove --name ID
   soloistd instance list
-  soloistd tui [--api-key KEY] [--no-persist]
+  soloistd tui [--api-key KEY] [--monitor-api-key] [--no-persist]
   soloistd pair [--instance ID]
   soloistd update
   soloistd ctl [--instance ID] COMMAND [ARGS...]

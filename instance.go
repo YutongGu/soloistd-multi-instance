@@ -28,6 +28,7 @@ type instanceInfo struct {
 	DeviceName     string `json:"device_name"`
 	PipewireDevice string `json:"pipewire_device,omitempty"`
 	LogPath        string `json:"log_path,omitempty"`
+	Status         string `json:"status"`
 	NoPersist      bool   `json:"no_persist,omitempty"`
 }
 
@@ -155,7 +156,7 @@ func (a app) instanceCommand(ctx context.Context, args []string) error {
 					destination += " (temporary)"
 				}
 			}
-			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\n", inst.Name, inst.DeviceName, destination, inst.LogPath)
+			fmt.Fprintf(a.stdout, "%s\t%s\t%s\t%s\t%s\n", inst.Name, inst.DeviceName, destination, inst.LogPath, inst.Status)
 		}
 		return nil
 	case "add":
@@ -165,13 +166,14 @@ func (a app) instanceCommand(ctx context.Context, args []string) error {
 		device := fs.String("device-name", "", "Spotify Connect device name")
 		pipewire := fs.String("pipewire-device", "", "PipeWire destination")
 		logPath := fs.String("log-path", "", "absolute path for this instance's Soloist log")
+		monitorAPIKey := fs.Bool("monitor-api-key", false, "detect Soloist API-key login failures in this instance's log")
 		key := fs.String("api-key", "", "Soloist API key (prefer SOLOIST_API_KEY)")
 		noPersist := fs.Bool("no-persist", false, "run only until the supervisor restarts")
 		if err := fs.Parse(args[1:]); err != nil {
 			return &commandError{code: 2, err: err}
 		}
 		if fs.NArg() != 0 || *name == "" || *device == "" {
-			return &commandError{code: 2, err: errors.New("usage: soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--log-path FILE] [--api-key KEY] [--no-persist]")}
+			return &commandError{code: 2, err: errors.New("usage: soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--log-path FILE] [--monitor-api-key] [--api-key KEY] [--no-persist]")}
 		}
 		if !instanceNamePattern.MatchString(*name) && *name != "default" {
 			return &commandError{code: 2, err: fmt.Errorf("invalid instance name %q", *name)}
@@ -212,7 +214,7 @@ func (a app) instanceCommand(ctx context.Context, args []string) error {
 		if *noPersist {
 			action = "add-temporary"
 		}
-		command := instanceCommand{Action: action, Instance: config{Name: *name, DeviceName: strings.TrimSpace(*device), PipewireDevice: *pipewire, LogPath: *logPath, APIKey: *key}}
+		command := instanceCommand{Action: action, Instance: config{Name: *name, DeviceName: strings.TrimSpace(*device), PipewireDevice: *pipewire, LogPath: *logPath, MonitorAPIKey: *monitorAPIKey, APIKey: *key}}
 		if _, err := sendControl(ctx, p, command); err != nil {
 			return err
 		}

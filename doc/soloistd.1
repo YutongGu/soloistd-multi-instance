@@ -14,6 +14,7 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .IR DEST ]
 .RB [ \-\-log\-path
 .IR FILE ]
+.RB [ \-\-monitor\-api\-key ]
 .br
 .B soloistd run
 .br
@@ -21,6 +22,7 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .RB [ \-\-api\-key
 .IR KEY ]
 .RB [ \-\-no\-persist ]
+.RB [ \-\-monitor\-api\-key ]
 .br
 .B soloistd instance add
 .BI --name " ID"
@@ -29,6 +31,7 @@ soloistd \- manage multiple Spotify Soloist devices with automatic updates
 .IR DEST ]
 .RB [ --log-path
 .IR FILE ]
+.RB [ --monitor-api-key ]
 .RB [ --api-key
 .IR KEY ]
 .RB [ --no-persist ]
@@ -107,6 +110,9 @@ takes priority over
 and the saved shared key, and does not change existing instances. Without it,
 the helper uses the environment or saved shared key, or prompts if needed.
 With
+.BR --monitor-api-key ,
+the helper enables API-key failure monitoring for each instance it adds.
+With
 .BR --no-persist ,
 all instances added in that helper session remain active only until the
 supervisor restarts. Closing the helper does not stop them. The helper also
@@ -127,6 +133,9 @@ to select a PipeWire destination. Leave it unset to use the default output.
 Use
 .B --log-path
 to route the instance's Soloist output to an absolute file path.
+Use
+.B --monitor-api-key
+to detect Soloist's API-key login failure message in that output.
 With
 .BR --no-persist ,
 the new instance is temporary and is omitted from the saved configuration.
@@ -138,7 +147,7 @@ Gracefully stop one instance and remove its saved definition, if any. Its sessio
 cache files remain on disk. Other instances continue running.
 .TP
 .B instance list
-List running instance IDs, Spotify device names, PipeWire destinations, and log paths.
+List instance IDs, Spotify device names, PipeWire destinations, log paths, and status.
 Temporary instances are marked.
 .TP
 .B pair
@@ -226,6 +235,20 @@ for the original unnamed instance. Created files have mode 0600. Logs remain
 after an instance is removed and need external rotation or cleanup.
 .B service logs
 follows the supervisor's journal messages, not Soloist output.
+.PP
+Optional
+.B --monitor-api-key
+or
+.B monitor_api_key
+in the config enables detection of Soloist's exact
+.I login failed: make sure --api-key is valid
+message. The instance status becomes
+.B api-key-login-failed
+and remains available if Soloist exits. Other instances continue running.
+An inherited shared key update restarts the failed instance. A
+.B running
+status indicates a running process, not a validated API key. The failure status
+reports Soloist's diagnostic, not independent key validation.
 .SH ENVIRONMENT
 .TP
 .B SOLOIST_API_KEY

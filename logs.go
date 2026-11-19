@@ -3,12 +3,44 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 
 	"golang.org/x/sys/unix"
 )
+
+const invalidAPIKeyMessage = "login failed: make sure --api-key is valid"
+
+// loginFailureWriter passes output through to the instance log while detecting
+// the exact diagnostic emitted by Soloist. A bounded tail handles split writes.
+type loginFailureWriter struct {
+	mu     sync.Mutex
+	output io.Writer
+	tail   []byte
+	failed *atomic.Bool
+}
+
+func (w *loginFailureWriter) Write(data []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	n, err := w.output.Write(data)
+	if n > 0 {
+		combined := append(append([]byte(nil), w.tail...), data[:n]...)
+		if bytes.Contains(combined, []byte(invalidAPIKeyMessage)) {
+			w.failed.Store(true)
+		}
+		if keep := len(invalidAPIKeyMessage) - 1; len(combined) > keep {
+			combined = combined[len(combined)-keep:]
+		}
+		w.tail = combined
+	}
+	return n, err
+}
 
 func openInstanceLog(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {

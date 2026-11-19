@@ -19,6 +19,7 @@ func (a app) tui(ctx context.Context, args []string) error {
 	fs.SetOutput(a.stderr)
 	apiKey := fs.String("api-key", "", "default API key for instances added in this session")
 	noPersist := fs.Bool("no-persist", false, "do not restore instances added in this session after a supervisor restart")
+	monitorAPIKey := fs.Bool("monitor-api-key", false, "detect API-key login failures for instances added in this session")
 	if err := fs.Parse(args); err != nil {
 		return &commandError{code: 2, err: err}
 	}
@@ -76,7 +77,7 @@ func (a app) tui(ctx context.Context, args []string) error {
 			if inst.NoPersist {
 				destination += "; temporary"
 			}
-			fmt.Fprintf(a.stdout, "  %s — %s (%s)\n    log: %s\n", inst.Name, inst.DeviceName, destination, inst.LogPath)
+			fmt.Fprintf(a.stdout, "  %s — %s (%s)\n    status: %s\n    log: %s\n", inst.Name, inst.DeviceName, destination, inst.Status, inst.LogPath)
 		}
 		return nil
 	}
@@ -147,7 +148,7 @@ func (a app) tui(ctx context.Context, args []string) error {
 			if *noPersist {
 				action = "add-temporary"
 			}
-			_, err = sendControl(ctx, p, instanceCommand{Action: action, Instance: config{Name: name, DeviceName: device, LogPath: logPath, APIKey: key}})
+			_, err = sendControl(ctx, p, instanceCommand{Action: action, Instance: config{Name: name, DeviceName: device, LogPath: logPath, MonitorAPIKey: *monitorAPIKey, APIKey: key}})
 			if err != nil {
 				fmt.Fprintf(a.stdout, "Could not add instance: %v\n", err)
 				continue

@@ -209,3 +209,77 @@ while :; do sleep 0.05; done
 		t.Fatal(err)
 	}
 }
+
+func TestMonitoredBadAPIKeyKeepsOtherInstancesRunning(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("Soloist is Linux-only")
+	}
+	p := testPaths(t)
+	if err := saveConfig(p, config{APIKey: "wrong", Instances: []config{
+		{Name: "bad", DeviceName: "Bad", MonitorAPIKey: true},
+		{Name: "healthy", DeviceName: "Healthy"},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(p.soloistBinary()), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+name= key=
+while [ "$#" -gt 0 ]; do
+ case "$1" in --device-name) name=$2; shift 2;; --api-key) key=$2; shift 2;; *) shift;; esac
+done
+if [ "$name" = Bad ] && [ "$key" = wrong ]; then
+ printf 'login failed: make sure --api-key is valid\n' >&2
+ exit 1
+fi
+trap 'exit 0' TERM
+while :; do sleep 0.05; done
+`
+	if err := os.WriteFile(p.soloistBinary(), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldURL := downloadBaseURL
+	downloadBaseURL = "http://127.0.0.1:1/"
+	defer func() { downloadBaseURL = oldURL }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	a := app{stdin: strings.NewReader(""), stdout: &stdout, stderr: &stderr}
+	done := make(chan error, 1)
+	go func() { done <- a.runDaemon(ctx, nil) }()
+	waitStatus := func(name, want string) {
+		t.Helper()
+		deadline := time.After(2 * time.Second)
+		for {
+			response, err := sendControl(ctx, p, instanceCommand{Action: "list"})
+			if err == nil {
+				for _, inst := range response.Instances {
+					if inst.Name == name && inst.Status == want {
+						return
+					}
+				}
+			}
+			select {
+			case err := <-done:
+				t.Fatalf("supervisor exited: %v; stderr: %s", err, stderr.String())
+			case <-deadline:
+				t.Fatalf("waiting for %s=%s; stderr: %s", name, want, stderr.String())
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+	waitStatus("bad", "api-key-login-failed")
+	waitStatus("healthy", "running")
+	if _, err := sendControl(ctx, p, instanceCommand{Action: "set-key", Instance: config{APIKey: "good"}}); err != nil {
+		t.Fatal(err)
+	}
+	waitStatus("bad", "running")
+	if _, err := sendControl(ctx, p, instanceCommand{Action: "remove", Name: "bad"}); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}

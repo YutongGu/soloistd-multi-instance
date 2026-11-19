@@ -75,6 +75,8 @@ soloistd instance add --name kitchen --device-name "Kitchen" --log-path /var/log
 
 The TUI also prompts for an optional log path. `instance list` prints the log path as its fourth column. Follow a file with `tail -f /path/to/instance.log`. `soloistd service logs` shows supervisor messages in the systemd journal; Soloist output goes to its instance file. Logs are appended across instance restarts and remain after removal. Created files have mode `0600`; arrange rotation or cleanup for long-running instances.
 
+To detect Soloist's exact `login failed: make sure --api-key is valid` message, add `--monitor-api-key` to `instance add` or `setup`, or set `"monitor_api_key": true` for that instance in `config.json`. For the TUI, `--monitor-api-key` applies to every instance added during that helper session. When monitoring is enabled, `instance list` shows `api-key-login-failed` in its fifth column after the message appears; the TUI shows the same status. If Soloist then exits, the supervisor keeps other instances running and retains the failed instance for inspection or removal. Updating the shared key with `soloistd setup --api-key KEY` restarts failed instances that inherit it. The `running` status only means the process is running; it does not prove that the key is valid. The failure status reports Soloist's diagnostic, not independent key validation; other login failures may not be classified.
+
 Omitting `--pipewire-device` lets PipeWire choose the default output. Pass that option only when you want to target a specific destination. The first `instance add` prompts for an API key without echoing it. You can also supply `--api-key` or `SOLOIST_API_KEY` for automation. For saved instances, the manager saves the shared key privately and reuses it for later instances.
 
 To save the key before adding devices, run `soloistd setup --api-key KEY`. This creates or updates `config.json` without asking for a device name or downloading Soloist. You can also create the file yourself with only the shared key:
@@ -108,17 +110,17 @@ Open Spotify on the same local network, open the device picker, and select a con
 ## Commands
 
 ```text
-soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--log-path FILE] [--api-key KEY]
+soloistd setup [--instance ID] [--device-name NAME] [--pipewire-device DEST] [--log-path FILE] [--monitor-api-key] [--api-key KEY]
                                 Configure an instance offline and fetch Soloist;
                                 --api-key KEY alone saves the shared key
 soloistd run                    Run the foreground supervisor
-soloistd tui [--api-key KEY] [--no-persist]
+soloistd tui [--api-key KEY] [--monitor-api-key] [--no-persist]
                                 Interactively view, add, and remove instances
-soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--log-path FILE] [--api-key KEY] [--no-persist]
+soloistd instance add --name ID --device-name NAME [--pipewire-device DEST] [--log-path FILE] [--monitor-api-key] [--api-key KEY] [--no-persist]
                                 Start an instance; save it unless --no-persist
 soloistd instance remove --name ID
                                 Stop and remove an instance; keep its data
-soloistd instance list          List active instances and log paths, marking temporary ones
+soloistd instance list          List instances, log paths, and status, marking temporary ones
 soloistd pair [--instance ID]   Replace one saved Spotify Connect session
 soloistd update                 Fetch the current official Soloist build
 soloistd ctl [--instance ID] status
@@ -148,7 +150,7 @@ With multiple instances, `pair` and `ctl` require `--instance ID` (use `default`
 
 The usual `~/.config`, `~/.local/share`, `~/.cache`, and `~/.local/state` fallbacks are used when the XDG variables are unset. The config directory is mode `0700`; both `config.json` and the live management socket are mode `0600`. The manager updates `config.json` internally when you add or remove a saved instance or change the shared API key, so the change survives a restart. The generated unit contains only the path to `soloistd`; it never contains the API key. Soloist itself requires the key as a command-line argument, so the key can still be visible to same-user process inspection while Soloist is running.
 
-Additional options can be set directly in `config.json`: `data_dir`, `cache_dir`, `cache_size_mb`, `pipewire_device`, `log_path`, `initial_volume`, and `websocket`. The original top-level device settings still work. Named devices live in the `instances` array and inherit the top-level `api_key` unless they specify their own. For example:
+Additional options can be set directly in `config.json`: `data_dir`, `cache_dir`, `cache_size_mb`, `pipewire_device`, `log_path`, `monitor_api_key`, `initial_volume`, and `websocket`. The original top-level device settings still work. Named devices live in the `instances` array and inherit the top-level `api_key` unless they specify their own. For example:
 
 ```json
 {
